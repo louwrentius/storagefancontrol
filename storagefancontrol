@@ -75,9 +75,6 @@ def get_highest_temperature(data):
     return int(temperature)
 
 def get_pwm():
-    #
-    # This setting needs customisation for your own environment.
-    #
     pwm = open('/sys/class/hwmon/hwmon2/device/pwm2', 'r')
     pwmvalue = int(pwm.read().strip())
     syslog.syslog("PWM: " + str(pwmvalue))
@@ -90,9 +87,6 @@ def set_pwm(value):
         value = pwm_max
     if value < pwm_min:
         value = pwm_min
-    #
-    # This setting needs customisation for your own environment.
-    #
     pwm = open('/sys/class/hwmon/hwmon2/device/pwm2', 'w')
     syslog.syslog("Set PWM: " + str(value))
     pwm.write(str(value))
@@ -128,7 +122,7 @@ def control_fan(data):
         else:
             syslog.syslog("No change needed.")
     else:
-        syslog.syslog("Highest disk temperature is at max: " + str(temphigh))
+        syslog.syslog("No change needed.")
 
 if __name__ == "__main__":
     
