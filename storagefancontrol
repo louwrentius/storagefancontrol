@@ -1,0 +1,142 @@
+#!/usr/bin/python
+
+import os
+import sys
+import subprocess
+import re
+import time
+import syslog
+
+portspercontroller = 8
+
+
+def number_of_controllers():
+    rawdata = subprocess.Popen(['megacli','-cfgdsply','-aALL'],\
+         stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
+    regex = re.compile('Adapter:.*')
+    match = regex.findall(rawdata)
+    return len(match)
+
+
+def get_drive_temp(controller, port):
+
+    rawdata =  subprocess.Popen(['megacli',  '-pdinfo', '-physdrv', '[64:' +\
+               str(port) +']', '-a' + str(controller)],\
+               stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0] 
+
+    regex = re.compile('Drive Temperature :(.*)')
+    match = regex.search(rawdata)
+    try:
+        temp = match.group(1).split("C")[0]
+
+        # 
+        # Ugly hack: issue with some old WD drives
+        # Controller reports 65C for them.
+        # 
+        if int(temp) >= 60:
+            temp = "?"
+        return temp
+        
+    except(AttributeError):
+        return ""
+    except(IndexError):
+        return ""
+
+
+def get_drive_info(controller, port):
+    return get_drive_temp(controller, port)
+
+
+def fetch_data():
+
+    controllercount = number_of_controllers()
+
+    drivearray =\
+         [[ 0 for x in xrange(portspercontroller)]\
+            for x in xrange(controllercount)]
+        
+    for x in xrange(controllercount):
+        for y in xrange(portspercontroller):
+           disk = get_drive_info(x,y)
+           if len(disk) == 0:
+                disk = ""
+           drivearray[x][y] = disk
+
+    return drivearray
+
+
+def get_highest_temperature(data):
+
+    temperature = 0
+    for controller in data:
+        for disk in controller:
+            if disk > temperature:
+                temperature = disk
+    return int(temperature)
+
+def get_pwm():
+    #
+    # This setting needs customisation for your own environment.
+    #
+    pwm = open('/sys/class/hwmon/hwmon2/device/pwm2', 'r')
+    pwmvalue = int(pwm.read().strip())
+    syslog.syslog("PWM: " + str(pwmvalue))
+    return pwmvalue 
+
+def set_pwm(value):
+    pwm_max = 200
+    pwm_min = 100
+    if value >  pwm_max:
+        value = pwm_max
+    if value < pwm_min:
+        value = pwm_min
+    #
+    # This setting needs customisation for your own environment.
+    #
+    pwm = open('/sys/class/hwmon/hwmon2/device/pwm2', 'w')
+    syslog.syslog("Set PWM: " + str(value))
+    pwm.write(str(value))
+
+
+def control_fan(data):
+    temphigh = 40
+    temp_low_delta = 1
+
+    pwm_default = 100
+    pwm_change = 5
+    pwm_delta_max = 3
+    pwm = get_pwm()
+
+    highestdisktemp = get_highest_temperature(data)
+    syslog.syslog("Highest temp: " + str(highestdisktemp))
+
+    if highestdisktemp > temphigh:
+        delta = highestdisktemp - temphigh
+        if delta == 0:
+            delta = 1
+        if delta > pwm_delta_max:
+            delta = pwm_delta_max
+        set_pwm(pwm + (pwm_change * delta))
+    elif highestdisktemp < temphigh:
+        delta = temphigh - highestdisktemp
+        if delta == 0:
+            delta = 1
+        if delta > pwm_delta_max:
+            delta = pwm_delta_max
+        if delta > temp_low_delta:
+            set_pwm(pwm - (pwm_change * delta))
+        else:
+            syslog.syslog("No change needed.")
+    else:
+        syslog.syslog("Highest disk temperature is at max: " + str(temphigh))
+
+if __name__ == "__main__":
+    
+    interval = 180
+
+    syslog.syslog("Starting disk fan control.")
+
+    while True:
+        data = fetch_data()
+        control_fan(data)
+        time.sleep(interval)
