@@ -134,9 +134,12 @@ def control_fan(data):
     
     global temp_old
     temp = get_highest_temperature(data)
+
     
     if  temp_old is None:
         temp_old = temp
+
+    delta_old_new = temp - temp_old
 
     if temp_old < temp:
         syslog.syslog("Temp is rising.")
@@ -151,21 +154,24 @@ def control_fan(data):
         temperature_is_changing = False
 
     pwm = get_pwm()
-    delta = temp - temp_target
-    pwm_change = pwm_minimum_change * delta
-    new_pwm = pwm + pwm_change #+ distance
+    delta_absolute = temp - temp_target
+    pwm_absolute = pwm_minimum_change * delta_absolute
+    pwm_relative = pwm_minimum_change * delta_old_new
 
-    syslog.syslog("Dive temperature: " + str(temp))
-    syslog.syslog("Difference in degrees: " + str(delta))
+    syslog.syslog("Drive temperature: " + str(temp))
+    syslog.syslog("Difference in degrees: " + str(delta_absolute))
     
     if temp > temp_target:
         syslog.syslog("Temp is too high.")
+        new_pwm = pwm + pwm_absolute
         set_pwm(new_pwm)
     elif temp < (temp_target - temp_lower_margin):
         syslog.syslog("Temp is too low.")
+        new_pwm = pwm + pwm_absolute
         set_pwm(new_pwm)
     elif temperature_is_changing:
         syslog.syslog("Temp is changing, requires ajustment.")
+        new_pwm = pwm + pwm_relative
         set_pwm(new_pwm)
     else:
         syslog.syslog("No adjustment needed.") 
