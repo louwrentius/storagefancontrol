@@ -7,11 +7,28 @@ import re
 import time
 import syslog
 
-portspercontroller = 8
+temp_target = 40          # Max temperature of the hottest disk
+temp_lower_margin = 2     # Difference in degrees from temp_target
+distance_from_average_treshold = 5
+polling_interval = 180     
+pwm_max = 200             # Maximum PWM value -> maximum fan speed
+pwm_min = 100             # Ditto for minimum.
+pwm_default = 130
+pwm_minimum_change = 5   
+pwm_maximum_change = 20  
+pwm_safety_value = 160
+
+temp_old = None
+
+enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
+controlfan = '/sys/class/hwmon/hwmon2/device/pwm2'                                  
+
+ports_per_controller = 8 # Number of ports per SAS controller card
 
 
 def number_of_controllers():
-    rawdata = subprocess.Popen(['megacli','-cfgdsply','-aALL'],\
+    rawdata = subprocess.Popen(\
+        ['/opt/MegaRAID/MegaCli/megacli','-cfgdsply','-aALL'],\
          stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
     regex = re.compile('Adapter:.*')
     match = regex.findall(rawdata)
@@ -20,7 +37,8 @@ def number_of_controllers():
 
 def get_drive_temp(controller, port):
 
-    rawdata =  subprocess.Popen(['megacli',  '-pdinfo', '-physdrv', '[64:' +\
+    rawdata =  subprocess.Popen(\
+        ['/opt/MegaRAID/MegaCli/megacli',  '-pdinfo', '-physdrv', '[64:' +\
                str(port) +']', '-a' + str(controller)],\
                stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0] 
 
@@ -52,11 +70,11 @@ def fetch_data():
     controllercount = number_of_controllers()
 
     drivearray =\
-         [[ 0 for x in xrange(portspercontroller)]\
+         [[ 0 for x in xrange(ports_per_controller)]\
             for x in xrange(controllercount)]
         
     for x in xrange(controllercount):
-        for y in xrange(portspercontroller):
+        for y in xrange(ports_per_controller):
            disk = get_drive_info(x,y)
            if len(disk) == 0:
                 disk = ""
@@ -74,63 +92,101 @@ def get_highest_temperature(data):
                 temperature = disk
     return int(temperature)
 
+def get_all_device_temperature(data):
+    temperature = 0
+    disks = 0
+    for controller in data:
+        for disk in controller:
+            if disk and disk > temperature:
+                disks += 1
+                temperature += int(disk)
+    return int(temperature / disks)
+
 def get_pwm():
-    pwm = open('/sys/class/hwmon/hwmon2/device/pwm2', 'r')
+    pwm = open(controlfan, 'r')
     pwmvalue = int(pwm.read().strip())
-    syslog.syslog("PWM: " + str(pwmvalue))
+    pwm.close()
+    syslog.syslog("Current PWM: " + str(pwmvalue))
     return pwmvalue 
 
 def set_pwm(value):
-    pwm_max = 200
-    pwm_min = 100
-    if value >  pwm_max:
-        value = pwm_max
-    if value < pwm_min:
-        value = pwm_min
-    pwm = open('/sys/class/hwmon/hwmon2/device/pwm2', 'w')
-    syslog.syslog("Set PWM: " + str(value))
+    
+    value = pwm_max if value > pwm_max else value
+    value = pwm_min if value < pwm_min else value
+
+    pwm = open(controlfan, 'w')
+    syslog.syslog("Set PWM value: " + str(value))
     pwm.write(str(value))
+    pwm.close()
+
+def enable_fan_control(device):
+    f = open(device, 'w')
+    try:
+        f.write('1')
+        f.close()
+    except IOerror:
+        message = "Error enabling fan control."
+        syslog.syslog(message)
+        print message
 
 
 def control_fan(data):
-    temphigh = 40
-    temp_low_delta = 1
+    
+    global temp_old
+    temp = get_highest_temperature(data)
+    
+    if  temp_old is None:
+        temp_old = temp
 
-    pwm_default = 100
-    pwm_change = 5
-    pwm_delta_max = 3
+    if temp_old < temp:
+        syslog.syslog("Temp is rising.")
+        temperature_is_changing = True
+    
+    if temp_old > temp:
+        syslog.syslog("Temp is falling.")
+        temperature_is_changing = True
+    
+    if temp_old == temp:
+        syslog.syslog("Temp has not changed.")
+        temperature_is_changing = False
+
     pwm = get_pwm()
+    delta = temp - temp_target
+    pwm_change = pwm_minimum_change * delta
+    new_pwm = pwm + pwm_change #+ distance
 
-    highestdisktemp = get_highest_temperature(data)
-    syslog.syslog("Highest temp: " + str(highestdisktemp))
-
-    if highestdisktemp > temphigh:
-        delta = highestdisktemp - temphigh
-        if delta == 0:
-            delta = 1
-        if delta > pwm_delta_max:
-            delta = pwm_delta_max
-        set_pwm(pwm + (pwm_change * delta))
-    elif highestdisktemp < temphigh:
-        delta = temphigh - highestdisktemp
-        if delta == 0:
-            delta = 1
-        if delta > pwm_delta_max:
-            delta = pwm_delta_max
-        if delta > temp_low_delta:
-            set_pwm(pwm - (pwm_change * delta))
-        else:
-            syslog.syslog("No change needed.")
+    syslog.syslog("Dive temperature: " + str(temp))
+    syslog.syslog("Difference in degrees: " + str(delta))
+    
+    if temp > temp_target:
+        syslog.syslog("Temp is too high.")
+        set_pwm(new_pwm)
+    elif temp < (temp_target - temp_lower_margin):
+        syslog.syslog("Temp is too low.")
+        set_pwm(new_pwm)
+    elif temperature_is_changing:
+        syslog.syslog("Temp is changing, requires ajustment.")
+        set_pwm(new_pwm)
     else:
-        syslog.syslog("No change needed.")
+        syslog.syslog("No adjustment needed.") 
+
+    temp_old = temp
+        
 
 if __name__ == "__main__":
-    
-    interval = 180
 
-    syslog.syslog("Starting disk fan control.")
+    try:
+        syslog.syslog("Starting disk fan control.")
+        enable_fan_control(enablefan)
+        pwm = get_pwm()
+        if pwm < pwm_default:
+            syslog.syslog("Set to default value.")
+            set_pwm(pwm_default)
 
-    while True:
-        data = fetch_data()
-        control_fan(data)
-        time.sleep(interval)
+        while True:
+            data = fetch_data()
+            control_fan(data)
+            time.sleep(polling_interval)
+
+    except (KeyboardInterrupt, SystemExit):
+        set_pwm(pwm_safety_value)
