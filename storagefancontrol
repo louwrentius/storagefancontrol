@@ -1,7 +1,5 @@
 #!/usr/bin/python
 
-import os
-import sys
 import subprocess
 import re
 import time
@@ -21,9 +19,9 @@ pwm_safety_value = 160
 temp_old = None
 
 enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
-controlfan = '/sys/class/hwmon/hwmon2/device/pwm2'                                  
-
+controlfan = '/sys/class/hwmon/hwmon2/device/pwm2'    
 ports_per_controller = 8 # Number of ports per SAS controller card
+
 
 
 def number_of_controllers():
@@ -69,16 +67,16 @@ def fetch_data():
 
     controllercount = number_of_controllers()
 
-    drivearray =\
-         [[ 0 for x in xrange(ports_per_controller)]\
+    drivearray = \
+         [[0 for x in xrange(ports_per_controller)]\
             for x in xrange(controllercount)]
         
     for x in xrange(controllercount):
         for y in xrange(ports_per_controller):
-           disk = get_drive_info(x,y)
-           if len(disk) == 0:
+            disk = get_drive_info(x, y)
+            if len(disk) == 0:
                 disk = ""
-           drivearray[x][y] = disk
+            drivearray[x][y] = disk
 
     return drivearray
 
@@ -124,7 +122,7 @@ def enable_fan_control(device):
     try:
         f.write('1')
         f.close()
-    except IOerror:
+    except IOError:
         message = "Error enabling fan control."
         syslog.syslog(message)
         print message
@@ -179,7 +177,7 @@ def control_fan(data):
     temp_old = temp
         
 
-if __name__ == "__main__":
+def main():
 
     try:
         syslog.syslog("Starting disk fan control.")
@@ -196,3 +194,8 @@ if __name__ == "__main__":
 
     except (KeyboardInterrupt, SystemExit):
         set_pwm(pwm_safety_value)
+
+if __name__ == "__main__":
+    
+    main()
+
