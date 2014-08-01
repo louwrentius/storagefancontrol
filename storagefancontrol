@@ -9,10 +9,10 @@ temp_target = 40          # Max temperature of the hottest disk
 temp_lower_margin = 2     # Difference in degrees from temp_target
 distance_from_average_treshold = 5
 polling_interval = 180     
-pwm_max = 200             # Maximum PWM value -> maximum fan speed
+pwm_max = 220             # Maximum PWM value -> maximum fan speed
 pwm_min = 100             # Ditto for minimum.
 pwm_default = 130
-pwm_minimum_change = 5   
+pwm_minimum_change = 10  
 pwm_maximum_change = 20  
 pwm_safety_value = 160
 
@@ -127,6 +127,9 @@ def enable_fan_control(device):
         syslog.syslog(message)
         print message
 
+def change_pwm(pwm,pwm_delta):
+    new_pwm = pwm + pwm_delta
+    set_pwm(new_pwm)
 
 def control_fan(data):
     
@@ -156,27 +159,29 @@ def control_fan(data):
     pwm_absolute = pwm_minimum_change * delta_absolute
     pwm_relative = pwm_minimum_change * delta_old_new
 
+    if temperature_is_changing and temp > temp_target:
+        pwm_absolute = pwm_absolute + 10 
+
     syslog.syslog("Drive temperature: " + str(temp))
     syslog.syslog("Difference in degrees: " + str(delta_absolute))
     
     if temp > temp_target:
         syslog.syslog("Temp is too high.")
-        new_pwm = pwm + pwm_absolute
-        set_pwm(new_pwm)
+	change_pwm(pwm,pwm_absolute)
     elif temp < (temp_target - temp_lower_margin):
         syslog.syslog("Temp is too low.")
-        new_pwm = pwm + pwm_absolute
-        set_pwm(new_pwm)
+	change_pwm(pwm,pwm_absolute)
     elif temperature_is_changing:
         syslog.syslog("Temp is changing, requires ajustment.")
-        new_pwm = pwm + pwm_relative
-        set_pwm(new_pwm)
+	change_pwm(pwm,pwm_relative)
+    elif pwm > pwm_max:
+	set_pwm(pwm_max)
     else:
         syslog.syslog("No adjustment needed.") 
 
     temp_old = temp
-        
 
+        
 def main():
 
     try:
