@@ -212,16 +212,7 @@ def control_fan(previous_t):
     pwm_delta_ajustment = pwm_min_delta * delta_t 
     log("PWM delta ajustment is", pwm_delta_ajustment)
 
-    if deviation_t < 0 and delta_t < 0:
-        multiplication = -1
-    else:
-        multiplication = 1
-
-    amplification = deviation_t * delta_t * multiplication * pwm_min_delta
-    log("Amplification is", amplification)
-
-    new_pwm = current_pwm + pwm_threshold_ajustment + pwm_delta_ajustment + \
-            amplification
+    new_pwm = current_pwm + pwm_threshold_ajustment + pwm_delta_ajustment 
     log("New PWM is", new_pwm)
 
     lower_threshold = threshold_t - lower_margin
