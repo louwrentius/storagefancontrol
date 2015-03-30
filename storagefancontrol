@@ -194,26 +194,37 @@ def control_fan(previous_t):
         previous_t = current_t
     delta_t = current_t - previous_t
 
+    pwm_default = settings['pwm_default']
+    pwm_min_delta = settings['pwm_min_delta']
+    threshold_t = settings['threshold_temperature']
+    lower_margin = settings['lower_margin']
+    deviation_t = current_t - threshold_t
+    current_pwm = get_pwm()
+
     log("Highest drive temperature", current_t)
     log("Previous temperature", previous_t)
     log("Difference in degrees", delta_t)
 
-    settings['previous_temperature'] = current_t 
 
-    threshold_t = settings['threshold_temperature']
-    deviation_t = current_t - threshold_t
-
-    current_pwm = get_pwm()
-    pwm_threshold_ajustment = settings['pwm_min_delta'] * deviation_t
+    pwm_threshold_ajustment = pwm_min_delta * deviation_t 
     log("PWM threshold ajustment is", pwm_threshold_ajustment)
 
-    pwm_delta_ajustment = settings['pwm_min_delta'] * delta_t
+    pwm_delta_ajustment = pwm_min_delta * delta_t 
     log("PWM delta ajustment is", pwm_delta_ajustment)
 
-    new_pwm = current_pwm + pwm_threshold_ajustment + pwm_delta_ajustment
+    if deviation_t < 0 and delta_t < 0:
+        multiplication = -1
+    else:
+        multiplication = 1
+
+    amplification = deviation_t * delta_t * multiplication * pwm_min_delta
+    log("Amplification is", amplification)
+
+    new_pwm = current_pwm + pwm_threshold_ajustment + pwm_delta_ajustment + \
+            amplification
     log("New PWM is", new_pwm)
 
-    lower_threshold = threshold_t - settings['lower_margin']
+    lower_threshold = threshold_t - lower_margin
     if current_t < lower_threshold:
         log("Temperature is below threshold (fan speed not ajusted)", current_t)
         return current_t
@@ -248,12 +259,12 @@ def get_settings():
     settings['megacli'] = "/opt/MegaRAID/MegaCli/megacli"
     settings['threshold_temperature'] = 40
     settings['lower_margin'] = 2
-    settings['polling_interval'] = 60
+    settings['polling_interval'] = 90
     settings['pwm_max'] = 220
     settings['pwm_min'] = 100
     settings['pwm_default'] = 130
     settings['pwm_min_delta'] = 5
-    settings['pwm_max_delta'] = 20
+    settings['pwm_max_delta'] = 40
     settings['pwm_safety'] = 160
     settings['previous_temperature'] = None
     settings['enablefan'] = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
