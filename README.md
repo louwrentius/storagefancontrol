@@ -7,6 +7,10 @@ So if you have 24 drives in a chassis, this script checks the temperature
 of each drive and the highest drive temperature is used to determine
 if the chassis fans need to run faster, slower or stay at the same speed.
 
+![schema][flowchart]
+
+[flowchart]: http://louwrentius.com/static/images/storagefancontrol.png
+
 Measurements (temperature and pwm settings) and action output is logged to syslog.
 
 The disk temperature is read through the LSI megacli command-line utility.
