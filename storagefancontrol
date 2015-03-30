@@ -1,28 +1,20 @@
 #!/usr/bin/python
 
+import sys
 import subprocess
 import re
 import time
 import syslog
 
-temp_target = 40          # Max temperature of the hottest disk
-temp_lower_margin = 2     # Difference in degrees from temp_target
-distance_from_average_treshold = 5
-polling_interval = 180     
-pwm_max = 220             # Maximum PWM value -> maximum fan speed
-pwm_min = 100             # Ditto for minimum.
-pwm_default = 130
-pwm_minimum_change = 10  
-pwm_maximum_change = 20  
-pwm_safety_value = 160
-
-temp_old = None
-
-enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
-controlfan = '/sys/class/hwmon/hwmon2/device/pwm2'    
-ports_per_controller = 8 # Number of ports per SAS controller card
-
-
+def log(message,variable=None):
+    settings = get_settings()
+    if variable is None:
+        message = message
+    else:
+        message = message + ": " + str(variable)
+    syslog.syslog(message)
+    if settings['debug']:
+        print message
 
 def number_of_controllers():
     rawdata = subprocess.Popen(\
@@ -31,7 +23,6 @@ def number_of_controllers():
     regex = re.compile('Adapter:.*')
     match = regex.findall(rawdata)
     return len(match)
-
 
 def get_drive_temp(controller, port):
 
@@ -49,8 +40,13 @@ def get_drive_temp(controller, port):
         # Ugly hack: issue with some old WD drives
         # Controller reports 65C for them.
         # 
+
+        if temp == "N/A":
+            temp = "?"
+
         if int(temp) >= 60:
             temp = "?"
+
         return temp
         
     except(AttributeError):
@@ -58,14 +54,13 @@ def get_drive_temp(controller, port):
     except(IndexError):
         return ""
 
-
 def get_drive_info(controller, port):
     return get_drive_temp(controller, port)
 
-
 def fetch_data():
-
+    settings = get_settings()
     controllercount = number_of_controllers()
+    ports_per_controller = settings['ports_per_controller']
 
     drivearray = \
          [[0 for x in xrange(ports_per_controller)]\
@@ -80,9 +75,8 @@ def fetch_data():
 
     return drivearray
 
-
-def get_highest_temperature(data):
-
+def get_highest_temperature():
+    data = fetch_data()
     temperature = 0
     for controller in data:
         for disk in controller:
@@ -90,115 +84,140 @@ def get_highest_temperature(data):
                 temperature = disk
     return int(temperature)
 
-def get_all_device_temperature(data):
-    temperature = 0
-    disks = 0
-    for controller in data:
-        for disk in controller:
-            if disk and disk > temperature:
-                disks += 1
-                temperature += int(disk)
-    return int(temperature / disks)
-
 def get_pwm():
-    pwm = open(controlfan, 'r')
-    pwmvalue = int(pwm.read().strip())
+    settings = get_settings()
+    filename = settings['controlfan']
+
+    pwm = open(filename, 'r')
+    pwm_value = int(pwm.read().strip())
     pwm.close()
-    syslog.syslog("Current PWM: " + str(pwmvalue))
-    return pwmvalue 
+    log("Current PWM",pwm_value)
+    return pwm_value
 
 def set_pwm(value):
+    settings = get_settings()
+    filename = settings['controlfan']
+
+    pwm_max = settings['pwm_max']
+    pwm_min = settings['pwm_min']
     
     value = pwm_max if value > pwm_max else value
     value = pwm_min if value < pwm_min else value
 
-    pwm = open(controlfan, 'w')
-    syslog.syslog("Set PWM value: " + str(value))
+    pwm = open(filename, 'w')
+    log("Set PWM value",value)
     pwm.write(str(value))
     pwm.close()
 
-def enable_fan_control(device):
-    f = open(device, 'w')
+def enable_fan_control():
+    settings = get_settings()
+    filename = settings['controlfan']
+    f = open(filename, 'w')
     try:
         f.write('1')
         f.close()
     except IOError:
         message = "Error enabling fan control."
-        syslog.syslog(message)
-        print message
+        log(message)
 
-def change_pwm(pwm,pwm_delta):
-    new_pwm = pwm + pwm_delta
-    set_pwm(new_pwm)
+def control_fan(previous_t):
+    # delta_t is used to determine if the temperature has
+    # changed since the last measurement.
+    settings = get_settings()
+    current_t = get_highest_temperature()
+    if  previous_t is None:
+        previous_t = current_t
+    delta_t = current_t - previous_t
 
-def control_fan(data):
-    
-    global temp_old
-    temp = get_highest_temperature(data)
+    log("Highest drive temperature",current_t)
+    log("Previous temperature",previous_t)
+    log("Difference in degrees",delta_t)
 
-    
-    if  temp_old is None:
-        temp_old = temp
+    settings['previous_temperature'] = current_t 
 
-    delta_old_new = temp - temp_old
+    # Deviation can be positive or negative integer
+    # This is used to automatically increase or
+    # decrease the fan speed.
+    threshold_t = settings['threshold_temperature']
+    deviation_t = current_t - threshold_t
 
-    if temp_old < temp:
-        syslog.syslog("Temp is rising.")
-        temperature_is_changing = True
-    
-    if temp_old > temp:
-        syslog.syslog("Temp is falling.")
-        temperature_is_changing = True
-    
-    if temp_old == temp:
-        syslog.syslog("Temp has not changed.")
-        temperature_is_changing = False
+    current_pwm = get_pwm()
+    pwm_ajustment = settings['pwm_min_delta'] * deviation_t
+    #new_pwm = current_pwm + pwm_ajustment + (abs(delta_t) * settings['pwm_min_delta']) 
+    new_pwm = current_pwm + pwm_ajustment 
 
-    pwm = get_pwm()
-    delta_absolute = temp - temp_target
-    pwm_absolute = pwm_minimum_change * delta_absolute
-    pwm_relative = pwm_minimum_change * delta_old_new
+    # If the current temperature is below the lower threshold
+    # we don't have to do anything.
+    lower_threshold = threshold_t - settings['lower_margin']
+    if current_t < lower_threshold:
+        log("Temperature is below threshold",current_t)
+        return current_t
 
-    if temperature_is_changing and temp > temp_target:
-        pwm_absolute = pwm_absolute + 10 
+    # Ajust the temperature if it's above the threshold (too hot).
+    if current_t > threshold_t:
+        log("Temperature is too high",current_t)
+        set_pwm(new_pwm)
+        return current_t
 
-    syslog.syslog("Drive temperature: " + str(temp))
-    syslog.syslog("Difference in degrees: " + str(delta_absolute))
-    
-    if temp > temp_target:
-        syslog.syslog("Temp is too high.")
-	change_pwm(pwm,pwm_absolute)
-    elif temp < (temp_target - temp_lower_margin):
-        syslog.syslog("Temp is too low.")
-	change_pwm(pwm,pwm_absolute)
-    elif temperature_is_changing:
-        syslog.syslog("Temp is changing, requires ajustment.")
-	change_pwm(pwm,pwm_relative)
-    elif pwm > pwm_max:
-	set_pwm(pwm_max)
+    if not delta_t == 0:
+        log("Temperature is changing",delta_t)
+        set_pwm(new_pwm)
+        return current_t
     else:
-        syslog.syslog("No adjustment needed.") 
+        log("Temperature is OK",current_t )
+        return current_t
 
-    temp_old = temp
+def get_settings():
+    settings = {}
 
+    if not len(sys.argv) == 2:
+        settings['debug'] = False
+    else:
+        if sys.argv[1] == "debug":
+            settings['debug'] = True
+        else:
+            settings['debug'] = False
+
+    
+    settings['threshold_temperature'] = 40
+    settings['lower_margin'] = 2
+    settings['polling_interval'] = 60
+    settings['pwm_max'] = 220
+    settings['pwm_min'] = 100
+    settings['pwm_default'] = 130
+    settings['pwm_min_delta'] = 5
+    settings['pwm_max_delta'] = 20
+    settings['pwm_safety'] = 160
+    settings['previous_temperature'] = None
+    settings['enablefan'] = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
+    settings['controlfan'] = '/sys/class/hwmon/hwmon2/device/pwm2'
+    settings['ports_per_controller'] = 8 
+
+    return settings
         
 def main():
 
+    settings = get_settings()
+    interval = settings['polling_interval']
+    pwm_safety = settings['pwm_safety'] 
+    pwm_default = settings['pwm_default']
+
     try:
-        syslog.syslog("Starting disk fan control.")
-        enable_fan_control(enablefan)
-        pwm = get_pwm()
-        if pwm < pwm_default:
-            syslog.syslog("Set to default value.")
-            set_pwm(pwm_default)
+        log("* Starting disk fan control.")
+        enable_fan_control()
+
+        log("Set fan speed to default value.")
+        set_pwm(pwm_default)
+
+        previous_temperature = None
 
         while True:
-            data = fetch_data()
-            control_fan(data)
-            time.sleep(polling_interval)
+            log("---")
+            previous_temperature = control_fan(previous_temperature)
+            time.sleep(interval)
 
     except (KeyboardInterrupt, SystemExit):
-        set_pwm(pwm_safety_value)
+        set_pwm(pwm_safety)
 
 if __name__ == "__main__":
     
