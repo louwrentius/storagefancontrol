@@ -1,4 +1,8 @@
 #!/usr/bin/python
+"""
+This program controls the chassis fan speed through PWM based on the temperature
+of the hottest hard drive in the chassis.
+"""
 
 import sys
 import subprocess
@@ -6,7 +10,11 @@ import re
 import time
 import syslog
 
-def log(message,variable=None):
+def log(message, variable=None):
+    """
+    Logs messages to syslog. Logs to screen if 'debug' is given as the
+    first argument to the executable.
+    """
     settings = get_settings()
     if variable is None:
         message = message
@@ -17,17 +25,31 @@ def log(message,variable=None):
         print message
 
 def number_of_controllers():
+    """
+    Get the number of LSI HBAs on the system.
+    In my case, I have 3 controllers with 8 drives each.
+    """
+    settings = get_settings()
+    megacli = settings['megacli']
+
     rawdata = subprocess.Popen(\
-        ['/opt/MegaRAID/MegaCli/megacli','-cfgdsply','-aALL'],\
+        [megacli,'-cfgdsply','-aALL'],\
          stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
     regex = re.compile('Adapter:.*')
     match = regex.findall(rawdata)
     return len(match)
 
 def get_drive_temp(controller, port):
+    """
+    Get the temperature from an individual drive through the megacli
+    utility. The return value is a positive integer that specifies the
+    temperature in Celcius.
+    """
+    settings = get_settings()
+    megacli = settings['megacli']
 
     rawdata =  subprocess.Popen(\
-        ['/opt/MegaRAID/MegaCli/megacli',  '-pdinfo', '-physdrv', '[64:' +\
+        [megacli,  '-pdinfo', '-physdrv', '[64:' +\
                str(port) +']', '-a' + str(controller)],\
                stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0] 
 
@@ -36,17 +58,12 @@ def get_drive_temp(controller, port):
     try:
         temp = match.group(1).split("C")[0]
 
-        # 
         # Ugly hack: issue with some old WD drives
         # Controller reports 65C for them.
-        # 
-
         if temp == "N/A":
             temp = "?"
-
         if int(temp) >= 60:
             temp = "?"
-
         return temp
         
     except(AttributeError):
@@ -54,10 +71,12 @@ def get_drive_temp(controller, port):
     except(IndexError):
         return ""
 
-def get_drive_info(controller, port):
-    return get_drive_temp(controller, port)
-
 def fetch_data():
+    """
+    Returns a two-dimentional list containing
+    the temperature of each drive. The first dimension is the 
+    controller. The second dimension is the drive.
+    """
     settings = get_settings()
     controllercount = number_of_controllers()
     ports_per_controller = settings['ports_per_controller']
@@ -66,16 +85,21 @@ def fetch_data():
          [[0 for x in xrange(ports_per_controller)]\
             for x in xrange(controllercount)]
         
-    for x in xrange(controllercount):
-        for y in xrange(ports_per_controller):
-            disk = get_drive_info(x, y)
+    for controller in xrange(controllercount):
+        for port in xrange(ports_per_controller):
+            disk = get_drive_temp(controller, port)
             if len(disk) == 0:
                 disk = ""
-            drivearray[x][y] = disk
+            drivearray[controller][port] = disk
 
     return drivearray
 
 def get_highest_temperature():
+    """
+    Walks through the list of all the drives and compares
+    all drive temperatures. The highest drive temperature
+    is returned as an integer, representing degrees of Celcius.
+    """
     data = fetch_data()
     temperature = 0
     for controller in data:
@@ -85,16 +109,24 @@ def get_highest_temperature():
     return int(temperature)
 
 def get_pwm():
+    """
+    Return the current PWM speed setting.
+    """
     settings = get_settings()
     filename = settings['controlfan']
-
-    pwm = open(filename, 'r')
-    pwm_value = int(pwm.read().strip())
-    pwm.close()
-    log("Current PWM",pwm_value)
+    filehandle = open(filename, 'r')
+    pwm_value = int(filehandle.read().strip())
+    filehandle.close()
+    log("Current PWM", pwm_value)
     return pwm_value
 
 def set_pwm(value):
+    """
+    Sets the fan speed. Only allows values between
+    pwm_min and pwm_max. Values outside these ranges
+    are set to either pwm_min or pwm_max as a safety
+    precaution.
+    """
     settings = get_settings()
     filename = settings['controlfan']
 
@@ -104,70 +136,105 @@ def set_pwm(value):
     value = pwm_max if value > pwm_max else value
     value = pwm_min if value < pwm_min else value
 
-    pwm = open(filename, 'w')
-    log("Set PWM value",value)
-    pwm.write(str(value))
-    pwm.close()
+    filehandle = open(filename, 'w')
+    log("Set PWM value", value)
+    filehandle.write(str(value))
+    filehandle.close()
 
 def enable_fan_control():
+    """
+    Tries to enable manual fan speed control."
+    """
     settings = get_settings()
     filename = settings['controlfan']
-    f = open(filename, 'w')
+    filehandle = open(filename, 'w')
     try:
-        f.write('1')
-        f.close()
+        filehandle.write('1')
+        filehandle.close()
     except IOError:
-        message = "Error enabling fan control."
+        message = "Error enabling filehandlean control."
         log(message)
 
 def control_fan(previous_t):
-    # delta_t is used to determine if the temperature has
-    # changed since the last measurement.
+    """
+    This function contains the actual logic that governs the fan speed.
+    
+    There is a temperature zone of 'lower_margin' to 'threshold_temperature'
+    that is a 'save zone where no ajustments are made unless the temperature
+    changes. So if the threshold is 40C and the lower_margin is 2C, the 
+    temperatures 38,39 and 40 will not cause a fan speed ajustment. However,
+    if the temperature changes from 38 to 39 degrees (change), fan speed 
+    will be increased. The size of the increment will impact how much the
+    fan speed will be increased (delta_t * pwm_min_delta)
+
+    The size of the fan speed ajustment is based on the temperature distance
+    between the threshold_temperature and the actual temperature like
+    pwm_min_delta * deviation_t. A threshold_temperature of 40 and an actual
+    temperature of 42 would result in a PWM ajust ment of 2 * pwm_min_delta[1]
+    = 10. If the current temperature would be 41, it would be a change of 5. 
+
+    [1] default = 5
+    
+    This is the algorithm:
+
+    1. If the temperature is below lower_margin, no change in fan speed.
+    2. If the temperature is above threshold_temperature, increase the
+       fan speed.
+    3. At this point, the temperature must be between lower_margin and 
+       threshold_temperature. Ajust the fan speed if the temperature is changing 
+       (compare previous temperature with current temperature). 
+    4. If none of the above is true, the temperature is OK and stable. No change
+       in fan speed required.
+
+    The current temperature is returned.
+    """
     settings = get_settings()
     current_t = get_highest_temperature()
     if  previous_t is None:
         previous_t = current_t
     delta_t = current_t - previous_t
 
-    log("Highest drive temperature",current_t)
-    log("Previous temperature",previous_t)
-    log("Difference in degrees",delta_t)
+    log("Highest drive temperature", current_t)
+    log("Previous temperature", previous_t)
+    log("Difference in degrees", delta_t)
 
     settings['previous_temperature'] = current_t 
 
-    # Deviation can be positive or negative integer
-    # This is used to automatically increase or
-    # decrease the fan speed.
     threshold_t = settings['threshold_temperature']
     deviation_t = current_t - threshold_t
 
     current_pwm = get_pwm()
-    pwm_ajustment = settings['pwm_min_delta'] * deviation_t
-    #new_pwm = current_pwm + pwm_ajustment + (abs(delta_t) * settings['pwm_min_delta']) 
-    new_pwm = current_pwm + pwm_ajustment 
+    pwm_threshold_ajustment = settings['pwm_min_delta'] * deviation_t
+    log("PWM threshold ajustment is", pwm_threshold_ajustment)
 
-    # If the current temperature is below the lower threshold
-    # we don't have to do anything.
+    pwm_delta_ajustment = settings['pwm_min_delta'] * delta_t
+    log("PWM delta ajustment is", pwm_delta_ajustment)
+
+    new_pwm = current_pwm + pwm_threshold_ajustment + pwm_delta_ajustment
+    log("New PWM is", new_pwm)
+
     lower_threshold = threshold_t - settings['lower_margin']
     if current_t < lower_threshold:
-        log("Temperature is below threshold",current_t)
+        log("Temperature is below threshold (fan speed not ajusted)", current_t)
         return current_t
 
-    # Ajust the temperature if it's above the threshold (too hot).
     if current_t > threshold_t:
-        log("Temperature is too high",current_t)
+        log("Temperature is too high, ajust fan speed", current_t)
         set_pwm(new_pwm)
         return current_t
 
     if not delta_t == 0:
-        log("Temperature is changing",delta_t)
+        log("Temperature is changing, ajust fan speed", delta_t)
         set_pwm(new_pwm)
         return current_t
     else:
-        log("Temperature is OK",current_t )
+        log("Temperature is OK (fan speed not ajusted)", current_t )
         return current_t
 
 def get_settings():
+    """
+    Contains all hard-coded static settings.
+    """
     settings = {}
 
     if not len(sys.argv) == 2:
@@ -178,7 +245,7 @@ def get_settings():
         else:
             settings['debug'] = False
 
-    
+    settings['megacli'] = "/opt/MegaRAID/MegaCli/megacli"
     settings['threshold_temperature'] = 40
     settings['lower_margin'] = 2
     settings['polling_interval'] = 60
@@ -196,6 +263,13 @@ def get_settings():
     return settings
         
 def main():
+    """
+    Start the loop that runs the control_fan function every 'interval' seconds
+    The control_fan function returns the measured temperature, which is stored
+    and used to compare the latest temperature with the previous measurement
+    to detect an increase or decrease in temperature. This is used for more
+    fine-grained fan speed control.
+    """
 
     settings = get_settings()
     interval = settings['polling_interval']
@@ -220,6 +294,5 @@ def main():
         set_pwm(pwm_safety)
 
 if __name__ == "__main__":
-    
     main()
 
