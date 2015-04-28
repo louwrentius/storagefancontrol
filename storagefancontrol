@@ -1,299 +1,298 @@
 #!/usr/bin/python
 """
 This program controls the chassis fan speed through PWM based on the temperature
-of the hottest hard drive in the chassis.
+of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool 
+'MegaCli' for reading hard drive temperatures.
 """
-
-import sys
+import os
 import subprocess
 import re
 import time
 import syslog
 
-def log(message, variable=None):
+def log(message):
     """
-    Logs messages to syslog. Logs to screen if 'debug' is given as the
-    first argument to the executable.
+    Logs messages to syslog and screen if 'export DEBUG=True'
     """
-    settings = get_settings()
-    if variable is None:
-        message = message
-    else:
-        message = message + ": " + str(variable)
-    syslog.syslog(message)
-    if settings['debug']:
-        print message
+    syslog.syslog(str(message))
 
-def number_of_controllers():
-    """
-    Get the number of LSI HBAs on the system.
-    In my case, I have 3 controllers with 8 drives each.
-    """
-    settings = get_settings()
-    megacli = settings['megacli']
+    try:
+        if os.environ['DEBUG'] == "True":
+            print message
+    except (KeyError):
+        pass
 
-    rawdata = subprocess.Popen(\
-        [megacli,'-cfgdsply','-aALL'],\
-         stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
-    regex = re.compile('Adapter:.*')
-    match = regex.findall(rawdata)
-    return len(match)
-
-def get_drive_temp(controller, port):
+class PID:                               
     """
-    Get the temperature from an individual drive through the megacli
-    utility. The return value is a positive integer that specifies the
-    temperature in Celcius.
-    """
-    settings = get_settings()
-    megacli = settings['megacli']
+    Discrete PID controll
+    Source: http://code.activestate.com/recipes/577231-discrete-pid-controller/  
+    """ 
 
-    rawdata =  subprocess.Popen(\
-        [megacli,  '-pdinfo', '-physdrv', '[64:' +\
+    def __init__(self, P=1.0, I=1, D=1.0, Derivator=0, Integrator=0, \
+                Integrator_max=10, Integrator_min=10):
+        """
+        Generic initialisation of local variables.
+        """
+
+        self.Kp=P                                                                
+        self.Ki=I                                                                
+        self.Kd=D                                                                
+        self.Derivator=Derivator                                                 
+        self.Integrator=Integrator                                               
+        self.Integrator_max=Integrator_max                                       
+        self.Integrator_min=Integrator_min                                       
+                                                                                 
+        self.set_point=0.0                                                       
+        self.error=0.0                                                           
+                                                                                 
+    def update(self,current_value):                                              
+        """                                                                      
+        Calculate PID output value for given reference input and feedback        
+        Current_value = set_point - measured value (difference)
+        """                                                                      
+                                                                                 
+        self.error = self.set_point - current_value                              
+                                                                                 
+        self.P_value = self.Kp * self.error                                      
+        self.D_value = self.Kd * ( self.error - self.Derivator)                  
+        self.Derivator = self.error                                              
+                                                                                 
+        self.Integrator = self.Integrator + self.error                           
+                                                                                 
+        if self.Integrator > self.Integrator_max:                                
+            self.Integrator = self.Integrator_max                                
+        elif self.Integrator < self.Integrator_min:                              
+            self.Integrator = self.Integrator_min                                
+                                                                                 
+        self.I_value = self.Integrator * self.Ki                                 
+                                                                                 
+        PID = self.P_value + self.I_value + self.D_value                         
+                                                                                 
+        return PID                                                               
+                                                                                 
+    def setPoint(self,set_point):                                                
+        """                                                                      
+        Initilize the setpoint of PID                                            
+        """                                                                      
+        self.set_point = set_point                                               
+        self.Integrator=0                                                        
+        self.Derivator=0                                                         
+
+
+class FanControl:
+    """
+    The chassis object provides you with the option:
+    1. Get the temperature of the hottest hard drive
+    2. Get the current fan speed 
+    3. Set the fan speed
+    """
+
+    def __init__(self):
+        """
+        Generic init method.
+        """
+        self.target_temperature = 40
+        self.sleep_time = 30
+        self.pwm_max = 255
+        self.pwm_min = 100
+        self.pwm_safety = 160
+        self.megacli = "/opt/MegaRAID/MegaCli/megacli"
+        self.ports_per_controller = 8 
+        self.enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
+        self.fan_control_device = '/sys/class/hwmon/hwmon2/device/pwm2'
+        self.debug = False
+
+    def log(self):
+        """
+        Log temperature and fan speed to syslog (& screen)
+        """
+        temp = self.get_highest_temperature()
+        fanspeed = self.get_pwm()
+
+        message = "Temperature: " + str(temp) + " | Fan speed: " + str(fanspeed) 
+        log(message)
+
+    def number_of_controllers(self):
+        """
+        Get the number of LSI HBAs on the system.
+        In my case, I have 3 controllers with 8 drives each.
+        """
+        rawdata = subprocess.Popen(\
+            [self.megacli,'-cfgdsply','-aALL'],\
+             stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
+        regex = re.compile('Adapter:.*')
+        match = regex.findall(rawdata)
+        return len(match)
+
+    def get_drive_temp(self, controller, port):
+        """
+        Get the temperature from an individual drive through the megacli
+        utility. The return value is a positive integer that specifies the
+        temperature in Celcius.
+        """
+        rawdata =  subprocess.Popen(\
+            [self.megacli,  '-pdinfo', '-physdrv', '[64:' +\
                str(port) +']', '-a' + str(controller)],\
                stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0] 
 
-    regex = re.compile('Drive Temperature :(.*)')
-    match = regex.search(rawdata)
-    try:
-        temp = match.group(1).split("C")[0]
+        regex = re.compile('Drive Temperature :(.*)')
+        match = regex.search(rawdata)
+        try:
+            temp = match.group(1).split("C")[0]
 
-        # Ugly hack: issue with some old WD drives
-        # Controller reports 65C for them.
-        if temp == "N/A":
-            temp = "?"
-        if int(temp) >= 60:
-            temp = "?"
-        return temp
-        
-    except(AttributeError):
-        return ""
-    except(IndexError):
-        return ""
+            # Ugly hack: issue with some old WD drives
+            # Controller reports 65C for them.
+            if temp == "N/A":
+                temp = "?"
+            if int(temp) >= 60:
+                temp = "?"
+            return temp
+            
+        except(AttributeError):
+            return ""
+        except(IndexError):
+            return ""
 
-def fetch_data():
-    """
-    Returns a two-dimentional list containing
-    the temperature of each drive. The first dimension is the 
-    controller. The second dimension is the drive.
-    """
-    settings = get_settings()
-    controllercount = number_of_controllers()
-    ports_per_controller = settings['ports_per_controller']
+    def fetch_data(self):
+        """
+        Returns a two-dimentional list containing
+        the temperature of each drive. The first dimension is the 
+        chassis. The second dimension is the drive.
+        """
 
-    drivearray = \
-         [[0 for x in xrange(ports_per_controller)]\
-            for x in xrange(controllercount)]
-        
-    for controller in xrange(controllercount):
-        for port in xrange(ports_per_controller):
-            disk = get_drive_temp(controller, port)
-            if len(disk) == 0:
-                disk = ""
-            drivearray[controller][port] = disk
+        drivearray = \
+             [[0 for x in xrange(self.ports_per_controller)]\
+                for x in xrange(self.number_of_controllers())]
+            
+        for controller in xrange(self.number_of_controllers()):
+            for port in xrange(self.ports_per_controller):
+                disk = self.get_drive_temp(controller, port)
+                if len(disk) == 0:
+                    disk = ""
+                drivearray[controller][port] = disk
 
-    return drivearray
+        return drivearray
 
-def get_highest_temperature():
-    """
-    Walks through the list of all the drives and compares
-    all drive temperatures. The highest drive temperature
-    is returned as an integer, representing degrees of Celcius.
-    """
-    data = fetch_data()
-    temperature = 0
-    for controller in data:
-        for disk in controller:
-            if disk > temperature:
-                temperature = disk
-    return int(temperature)
+    def get_highest_temperature(self):
+        """
+        Walks through the list of all the drives and compares
+        all drive temperatures. The highest drive temperature
+        is returned as an integer, representing degrees of Celcius.
+        """
 
-def get_pwm():
-    """
-    Return the current PWM speed setting.
-    """
-    settings = get_settings()
-    filename = settings['controlfan']
-    filehandle = open(filename, 'r')
-    pwm_value = int(filehandle.read().strip())
-    filehandle.close()
-    log("Current PWM", pwm_value)
-    return pwm_value
+        data = self.fetch_data()
+        temperature = 0
+        for controller in data:
+            for disk in controller:
+                if disk > temperature:
+                    temperature = disk
+        return int(temperature)
 
-def set_pwm(value):
-    """
-    Sets the fan speed. Only allows values between
-    pwm_min and pwm_max. Values outside these ranges
-    are set to either pwm_min or pwm_max as a safety
-    precaution.
-    """
-    settings = get_settings()
-    filename = settings['controlfan']
-
-    pwm_max = settings['pwm_max']
-    pwm_min = settings['pwm_min']
-    
-    value = pwm_max if value > pwm_max else value
-    value = pwm_min if value < pwm_min else value
-
-    filehandle = open(filename, 'w')
-    log("Set PWM value", value)
-    filehandle.write(str(value))
-    filehandle.close()
-
-def enable_fan_control():
-    """
-    Tries to enable manual fan speed control."
-    """
-    settings = get_settings()
-    filename = settings['controlfan']
-    filehandle = open(filename, 'w')
-    try:
-        filehandle.write('1')
+    def get_pwm(self):
+        """
+        Return the current PWM speed setting.
+        """
+        filename = self.fan_control_device
+        filehandle = open(filename, 'r')
+        pwm_value = int(filehandle.read().strip())
         filehandle.close()
-    except IOError:
-        message = "Error enabling filehandlean control."
-        log(message)
+        return pwm_value
 
-def control_fan(previous_t):
-    """
-    This function contains the actual logic that governs the fan speed.
-    
-    There is a temperature zone of 'lower_margin' to 'threshold_temperature'
-    that is a 'save zone where no ajustments are made unless the temperature
-    changes. So if the threshold is 40C and the lower_margin is 2C, the 
-    temperatures 38,39 and 40 will not cause a fan speed ajustment. However,
-    if the temperature changes from 38 to 39 degrees (change), fan speed 
-    will be increased. The size of the increment will impact how much the
-    fan speed will be increased (delta_t * pwm_min_delta)
+    def set_pwm(self, value):
+        """
+        Sets the fan speed. Only allows values between
+        pwm_min and pwm_max. Values outside these ranges
+        are set to either pwm_min or pwm_max as a safety
+        precaution.
+        """
+        self.changed_pwm = True
 
-    The size of the fan speed ajustment is based on the temperature distance
-    between the threshold_temperature and the actual temperature like
-    pwm_min_delta * deviation_t. A threshold_temperature of 40 and an actual
-    temperature of 42 would result in a PWM ajust ment of 2 * pwm_min_delta[1]
-    = 10. If the current temperature would be 41, it would be a change of 5. 
-
-    [1] default = 5
-    
-    This is the algorithm:
-
-    1. If the temperature is below lower_margin, no change in fan speed.
-    2. If the temperature is above threshold_temperature, increase the
-       fan speed.
-    3. At this point, the temperature must be between lower_margin and 
-       threshold_temperature. Ajust the fan speed if the temperature is changing 
-       (compare previous temperature with current temperature). 
-    4. If none of the above is true, the temperature is OK and stable. No change
-       in fan speed required.
-
-    The current temperature is returned.
-    """
-    settings = get_settings()
-    current_t = get_highest_temperature()
-    if  previous_t is None:
-        previous_t = current_t
-    delta_t = current_t - previous_t
-
-    pwm_default = settings['pwm_default']
-    pwm_min_delta = settings['pwm_min_delta']
-    threshold_t = settings['threshold_temperature']
-    lower_margin = settings['lower_margin']
-    deviation_t = current_t - threshold_t
-    current_pwm = get_pwm()
-
-    log("Highest drive temperature", current_t)
-    log("Previous temperature", previous_t)
-    log("Difference in degrees", delta_t)
-
-
-    pwm_threshold_ajustment = pwm_min_delta * deviation_t 
-    log("PWM threshold ajustment is", pwm_threshold_ajustment)
-
-    pwm_delta_ajustment = pwm_min_delta * delta_t 
-    log("PWM delta ajustment is", pwm_delta_ajustment)
-
-    new_pwm = current_pwm + pwm_threshold_ajustment + pwm_delta_ajustment 
-    log("New PWM is", new_pwm)
-
-    lower_threshold = threshold_t - lower_margin
-    if current_t < lower_threshold:
-        log("Temperature is below threshold (fan speed not ajusted)", current_t)
-        return current_t
-
-    if current_t > threshold_t:
-        log("Temperature is too high, ajust fan speed", current_t)
-        set_pwm(new_pwm)
-        return current_t
-
-    if not delta_t == 0:
-        log("Temperature is changing, ajust fan speed", delta_t)
-        set_pwm(new_pwm)
-        return current_t
-    else:
-        log("Temperature is OK (fan speed not ajusted)", current_t )
-        return current_t
-
-def get_settings():
-    """
-    Contains all hard-coded static settings.
-    """
-    settings = {}
-
-    if not len(sys.argv) == 2:
-        settings['debug'] = False
-    else:
-        if sys.argv[1] == "debug":
-            settings['debug'] = True
-        else:
-            settings['debug'] = False
-
-    settings['megacli'] = "/opt/MegaRAID/MegaCli/megacli"
-    settings['threshold_temperature'] = 40
-    settings['lower_margin'] = 2
-    settings['polling_interval'] = 90
-    settings['pwm_max'] = 220
-    settings['pwm_min'] = 100
-    settings['pwm_default'] = 130
-    settings['pwm_min_delta'] = 5
-    settings['pwm_max_delta'] = 40
-    settings['pwm_safety'] = 160
-    settings['previous_temperature'] = None
-    settings['enablefan'] = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
-    settings['controlfan'] = '/sys/class/hwmon/hwmon2/device/pwm2'
-    settings['ports_per_controller'] = 8 
-
-    return settings
+        filename = self.fan_control_device
+        pwm_max = self.pwm_max
+        pwm_min = self.pwm_min
         
+        value = pwm_max if value > pwm_max else value
+        value = pwm_min if value < pwm_min else value
+
+        filehandle = open(filename, 'w')
+        filehandle.write(str(value))
+        filehandle.close()
+
+    def set_fan_speed(self,percent):
+        """
+        Set fan speed based on a percentage of full speed.
+        Values are thus 1-100 instead of raw 1-255
+        """
+        one_percent = float(self.pwm_max) / 100
+        pwm = percent * one_percent
+        self.set_pwm(int(pwm))
+
+    def enable_fan_control(self):
+        """
+        Tries to enable manual fan speed control."
+        """
+        filename = self.fan_control_device
+        filehandle = open(filename, 'w')
+        try:
+            filehandle.write('1')
+            filehandle.close()
+        except IOError:
+            message = "Error enabling filehandlean control."
+            self.log(message)
+
+    def get_temperature_deviation(self):
+        """
+        Calculate the distance between the current temperature and the
+        target temperature. This distance is the 'error' as used by the
+        PID algorithm to determine the appropriate fan speed.
+        """
+        return int(self.target_temperature - self.get_highest_temperature())
+
+    def sleep(self):
+        """
+        Sleep for sleep_time seconds.
+        """
+        time.sleep(self.sleep_time)
+
+
+def init(chassis,pid):
+    """
+    Enable fan control and set the target temperature.
+    """
+    chassis.enable_fan_control()
+    pid.setPoint(chassis.target_temperature)
+
+    try:
+        chassis.debug = os.environ['DEBUG'] 
+    except (KeyError):
+        pass
+
+
 def main():
     """
-    Start the loop that runs the control_fan function every 'interval' seconds
-    The control_fan function returns the measured temperature, which is stored
-    and used to compare the latest temperature with the previous measurement
-    to detect an increase or decrease in temperature. This is used for more
-    fine-grained fan speed control.
-    """
+    The chassis object is used to control the fan speed and take
+    temperature measurements. The pid object is used to calculate
+    the fan speed based on past and current temperature values.
 
-    settings = get_settings()
-    interval = settings['polling_interval']
-    pwm_safety = settings['pwm_safety'] 
-    pwm_default = settings['pwm_default']
+    The P, I and D values need to be tuned to your particular
+    environment, but they run fine for my machine.
+    """
+    chassis = FanControl()
+    pid = PID(P=1.0, I=1, D=5, Derivator=0, Integrator=0, \
+                        Integrator_max=10, Integrator_min=10)
+
+    init(chassis,pid)
 
     try:
-        log("* Starting disk fan control.")
-        enable_fan_control()
-
-        log("Set fan speed to default value.")
-        set_pwm(pwm_default)
-
-        previous_temperature = None
-
         while True:
-            log("---")
-            previous_temperature = control_fan(previous_temperature)
-            time.sleep(interval)
+            temperature_error = chassis.get_temperature_deviation()
+            fan_duty_cycle = int(pid.update(temperature_error))
+            chassis.set_fan_speed(fan_duty_cycle)
+            chassis.log()
+            chassis.sleep()
 
     except (KeyboardInterrupt, SystemExit):
-        set_pwm(pwm_safety)
+        chassis.set_pwm(chassis.pwm_safety)
 
 if __name__ == "__main__":
     main()
