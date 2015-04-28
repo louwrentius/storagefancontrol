@@ -4,7 +4,9 @@ storagefancontrol
 Sets chassis fan speed based on highest disk temperature
 
 Fan control is coverned by the control loop feedback mechanism [PID][pid].
+Here is a [nice intro][video01] on PID.
 
+[video01]: https://www.youtube.com/watch?v=UR0hOmjaHp0
 [pid]: http://en.wikipedia.org/wiki/PID_controller  
 
 So if you have 24 drives in a chassis, this script checks the temperature
