@@ -15,6 +15,16 @@ the PID controller makes sure that an optimal fan speed is found to keep the
 system at a maximum of - in my case - 40C.
 
 Measurements (temperature and pwm settings) and action output is logged to syslog.
+
+    Apr 29 00:54:53 nano storagefancontrol: Temperature: 37 | Fan speed: 119
+    Apr 29 00:55:24 nano storagefancontrol: Temperature: 37 | Fan speed: 119
+    Apr 29 00:55:55 nano storagefancontrol: Temperature: 37 | Fan speed: 119
+    Apr 29 00:56:25 nano storagefancontrol: Temperature: 37 | Fan speed: 119
+    Apr 29 00:56:56 nano storagefancontrol: Temperature: 38 | Fan speed: 135
+    Apr 29 00:57:26 nano storagefancontrol: Temperature: 38 | Fan speed: 122
+    Apr 29 00:57:57 nano storagefancontrol: Temperature: 38 | Fan speed: 122
+    Apr 29 00:58:28 nano storagefancontrol: Temperature: 38 | Fan speed: 122
+
 This will give you output on the console:
 
     export DEBUG=True 
