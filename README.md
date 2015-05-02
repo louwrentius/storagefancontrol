@@ -1,5 +1,7 @@
-storagefancontrol (Fan speed PID controller)
+storagefancontrol 
 =================
+Fan speed PID controller
+------------------------
 
 This script is meant for storage servers with lots of (spinning) hard drives.
 It regulates the chassis (PWM) fan speed based on the hard drive temperature. 
