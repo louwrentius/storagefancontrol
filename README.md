@@ -1,4 +1,4 @@
-storagefancontrol
+storagefancontrol (Fan speed PID controller)
 =================
 
 This script is meant for storage servers with lots of (spinning) hard drives.
