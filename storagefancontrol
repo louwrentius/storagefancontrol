@@ -1,7 +1,7 @@
 #!/usr/bin/python
 """
 This program controls the chassis fan speed through PWM based on the temperature
-of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool 
+of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool
 'MegaCli' for reading hard drive temperatures.
 """
 import os
@@ -19,150 +19,155 @@ def _reduce_method(meth):
     This is a hack to work around the fact that multiprocessing
     can't operate on class methods by default.
     """
-    return (getattr,(meth.__self__,meth.__func__.__name__))
+    return (getattr, (meth.__self__, meth.__func__.__name__))
 
-class PID:                               
+class PID:
     """
     Discrete PID controll
-    Source: http://code.activestate.com/recipes/577231-discrete-pid-controller/  
+    Source: http://code.activestate.com/recipes/577231-discrete-pid-controller/
 
     This class calculates the appropriate fan speed based on the difference
     between the current temperature and the desired (target) temperature.
-    """ 
+    """
 
     def __init__(self, P=1.0, I=1, D=1.0, Derivator=0, Integrator=2, \
                 Integrator_max=100, Integrator_min=0):
         """
         Generic initialisation of local variables.
         """
+        self.Kp = P
+        self.Ki = I
+        self.Kd = D
+        self.Derivator = Derivator
+        self.Integrator = Integrator
+        self.Integrator_max = Integrator_max
+        self.Integrator_min = Integrator_min
 
-        self.Kp=P                                                                
-        self.Ki=I                                                                
-        self.Kd=D                                                                
-        self.Derivator=Derivator                                                 
-        self.Integrator=Integrator                                               
-        self.Integrator_max=Integrator_max                                       
-        self.Integrator_min=Integrator_min                                       
-                                                                                 
-        self.set_point=0.0                                                       
-        self.error=0.0                                                           
-                                                                                 
-    def update(self,current_value):                                              
-        """                                                                      
-        Calculate PID output value for given reference input and feedback        
+        self.set_point = 0.0
+        self.error = 0.0
+
+    def update(self, current_value):
+        """
+        Calculate PID output value for given reference input and feedback
         Current_value = set_point - measured value (difference)
-        """                                                                      
+        """
         self.error = current_value - self.set_point
-                                                                                 
-        self.P_value = self.Kp * self.error                                      
-        self.D_value = self.Kd * ( self.error - self.Derivator)                  
-        self.Derivator = self.error                                              
 
-        self.Integrator = self.Integrator + self.error                           
-                                                                                 
-        if self.Integrator > self.Integrator_max:                                
-            self.Integrator = self.Integrator_max                                
-        elif self.Integrator < self.Integrator_min:                              
-            self.Integrator = self.Integrator_min                                
-                                                                                 
-        self.I_value = self.Integrator * self.Ki                                 
-                                                                                 
-        PID = self.P_value + self.I_value + self.D_value                         
-                                                                                 
-        return PID                                                               
-                                                                                 
-    def set_target_value(self,set_point):                                                
-        """                                                                      
-        Initilize the setpoint of PID                                            
-        """                                                                      
-        self.set_point = set_point                                               
+        self.P_value = self.Kp * self.error
+        self.D_value = self.Kd * ( self.error - self.Derivator)
+        self.Derivator = self.error
 
-copy_reg.pickle(types.MethodType,_reduce_method)
+        self.Integrator = self.Integrator + self.error
+
+        if self.Integrator > self.Integrator_max:
+            self.Integrator = self.Integrator_max
+        elif self.Integrator < self.Integrator_min:
+            self.Integrator = self.Integrator_min
+
+        self.I_value = self.Integrator * self.Ki
+
+        PID = self.P_value + self.I_value + self.D_value
+
+        return PID
+
+    def set_target_value(self, set_point):
+        """
+        Initilize the setpoint of PID
+        """
+        self.set_point = set_point
+
+copy_reg.pickle(types.MethodType, _reduce_method)
 class Smart:
     """
     Uses SMART data from storage devices to determine the temperature
     of the hottest drive.
     """
 
-    def __init__(self, device_filter="sd"):                                      
+    def __init__(self):
         """
+        Init.
         """
-        self.block_devices = ""                                                   
-        self.device_filter = device_filter                                       
+        self.block_devices = ""
+        self.device_filter = "sd"
         self.highest_temperature = 0
         self.get_block_devices()
         self.smart_workers = 24
-                                                                                 
-    def filter_block_devices(self, device):                                      
-                                                                                 
-            if not device.find(self.device_filter):                              
-                return True                                                      
-            return False                                                         
-                                                                                 
-    def get_block_devices(self):                                                 
+
+    def filter_block_devices(self, block_devices):
+        """
+        Filter out devices like 'loop, ram'.
+        """
+        devices = []
+        for device in block_devices:
+            if not device.find(self.device_filter):
+                devices.append(device)
+        return devices
+
+    def get_block_devices(self):
         """
         Retrieve the list of block devices.
         By default only lists /dev/sd* devices.
         Configure the appropriate device filter with
         setting <object>.device_filter to some other value.
         """
-        devicepath = "/sys/block"                                                
-        block_devices = os.listdir(devicepath)                                    
-        block_devices.sort()                                                      
-        self.block_devices = filter(self.filter_block_devices, block_devices)      
+        devicepath = "/sys/block"
+        block_devices = os.listdir(devicepath)
+        block_devices.sort()
+        self.block_devices = self.filter_block_devices(block_devices)
 
-    def get_smart_data(self, device):                                                      
+    def get_smart_data(self, device):
         """
         Call the smartctl command line utilily on a device to get the raw
         smart data output.
         """
-        
+
         device = "/dev/" + device
 
-        try:                                                                         
-            child = subprocess.Popen(['smartctl',  '-a',  '-d',  'ata',  device],    
-                                     stdout=subprocess.PIPE,                         
-                                     stderr=subprocess.PIPE)                         
-        except OSError:                                                              
-            print "Executing smartctl gave an error, is smartmontools installed?"    
-            sys.exit(1)                                                              
-                                                                                     
-        rawdata = child.communicate()                                                
-                                                                                     
-        if child.returncode:                                                         
-            child = subprocess.Popen(['smartctl',  '-a',  device],                   
-                                     stdout=subprocess.PIPE,                         
-                                     stderr=subprocess.PIPE)                         
-            rawdata = child.communicate()                                            
-            if child.returncode == 1:                                                
-                return ""                                                            
-                                                                                     
-        smartdata = rawdata[0]                                                       
-        return smartdata                
+        try:
+            child = subprocess.Popen(['smartctl',  '-a',  '-d',  'ata', \
+                                    device], stdout=subprocess.PIPE, \
+                                     stderr=subprocess.PIPE)
+        except OSError:
+            print "Executing smartctl gave an error,"
+            print "is smartmontools installed?"
+            sys.exit(1)
 
-    def get_parameter_from_smart(self, data, parameter, distance):                         
+        rawdata = child.communicate()
+
+        if child.returncode:
+            child = subprocess.Popen(['smartctl',  '-a',  device],
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+            rawdata = child.communicate()
+            if child.returncode == 1:
+                return ""
+
+        smartdata = rawdata[0]
+        return smartdata
+
+    def get_parameter_from_smart(self, data, parameter, distance):
         """
         Retreives the desired value from the raw smart data.
         """
-        regex = re.compile(parameter + '(.*)')                                       
-        match = regex.search(data)                                                   
-                                                                                 
-        if match:                                                                    
-                tmp = match.group(1)                                                 
-                length = len(tmp.split("   "))                                       
-                if length <= distance:                                               
-                    distance = length-1                                              
-                                                                                     
-                #                                                                    
-                # SMART data is often a bit of a mess,  so this                      
-                # hack is used to cope with this.                                    
-                #                                                                    
-                                                                                     
-                try:                                                                 
-                    model = match.group(1).split("   ")[distance].split(" ")[1]      
-                except:                                                              
-                    model = match.group(1).split("   ")[distance+1].split(" ")[1]    
-                return str(model)                                                    
+        regex = re.compile(parameter + '(.*)')
+        match = regex.search(data)
+
+        if match:
+            tmp = match.group(1)
+            length = len(tmp.split("   "))
+            if length <= distance:
+                distance = length-1
+
+            #
+            # SMART data is often a bit of a mess,  so this
+            # hack is used to cope with this.
+            #
+
+            try:
+                model = match.group(1).split("   ")[distance].split(" ")[1]
+            except:
+                model = match.group(1).split("   ")[distance+1].split(" ")[1]
+            return str(model)
         return 0
 
     def get_temperature(self, device):
@@ -184,7 +189,7 @@ class Smart:
         pool = mp.Pool(processes=self.smart_workers)
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
-        
+
         for temperature in results:
             if temperature > highest_temperature:
                 highest_temperature = temperature
@@ -195,9 +200,9 @@ class Controller:
     Reading temperature data from IBM / LSI controllers.
     """
     def __init__(self):
-        self.target_temperature = 40
         self.megacli = "/opt/MegaRAID/MegaCli/megacli"
-        self.ports_per_controller = 8 
+        self.ports_per_controller = 8
+        self.highest_temperature = 0
 
     def number_of_controllers(self):
         """
@@ -220,7 +225,7 @@ class Controller:
         rawdata =  subprocess.Popen(\
             [self.megacli,  '-pdinfo', '-physdrv', '[64:' +\
                str(port) +']', '-a' + str(controller)],\
-               stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0] 
+               stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
 
         regex = re.compile('Drive Temperature :(.*)')
         match = regex.search(rawdata)
@@ -234,7 +239,7 @@ class Controller:
             if int(temp) >= 60:
                 temp = "?"
             return temp
-            
+
         except(AttributeError):
             return ""
         except(IndexError):
@@ -243,14 +248,13 @@ class Controller:
     def fetch_data(self):
         """
         Returns a two-dimentional list containing
-        the temperature of each drive. The first dimension is the 
+        the temperature of each drive. The first dimension is the
         chassis. The second dimension is the drive.
         """
-
         drivearray = \
              [[0 for x in xrange(self.ports_per_controller)]\
                 for x in xrange(self.number_of_controllers())]
-            
+
         for controller in xrange(self.number_of_controllers()):
             for port in xrange(self.ports_per_controller):
                 disk = self.get_drive_temp(controller, port)
@@ -273,14 +277,14 @@ class Controller:
             for disk in controller:
                 if disk > temperature:
                     temperature = disk
-        return int(temperature)
+        self.highest_temperature = int(temperature)
 
 
 class FanControl:
     """
     The chassis object provides you with the option:
     1. Get the temperature of the hottest hard drive
-    2. Get the current fan speed 
+    2. Get the current fan speed
     3. Set the fan speed
     """
 
@@ -291,11 +295,10 @@ class FanControl:
         self.polling_interval = 30
         self.pwm_max = 255
         self.pwm_min = 100
-        self.pwm_safety = 140
+        self.pwm_safety = 160
         self.enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
         self.fan_control_device = '/sys/class/hwmon/hwmon2/device/pwm2'
         self.debug = False
-
         self.enable_fan_control()
 
     def get_pwm(self):
@@ -315,12 +318,10 @@ class FanControl:
         are set to either pwm_min or pwm_max as a safety
         precaution.
         """
-        self.changed_pwm = True
-
         filename = self.fan_control_device
         pwm_max = self.pwm_max
         pwm_min = self.pwm_min
-        
+
         value = pwm_max if value > pwm_max else value
         value = pwm_min if value < pwm_min else value
 
@@ -328,7 +329,7 @@ class FanControl:
         filehandle.write(str(value))
         filehandle.close()
 
-    def set_fan_speed(self,percent):
+    def set_fan_speed(self, percent):
         """
         Set fan speed based on a percentage of full speed.
         Values are thus 1-100 instead of raw 1-255
@@ -347,8 +348,9 @@ class FanControl:
             filehandle.write('1')
             filehandle.close()
         except IOError:
-            message = "Error enabling filehandlean control."
-            self.log(message)
+            message = "Error enabling fan control. Sufficient privileges?"
+            print message
+            sys.exit(1)
 
 
 def is_debug_enabled():
@@ -356,53 +358,73 @@ def is_debug_enabled():
     Set debug if enabled.
     """
     try:
-        debug = os.environ['DEBUG'] 
+        debug = os.environ['DEBUG']
         if debug == "True":
             return True
         else:
             return False
 
     except (KeyError):
-            return False
+        return False
 
-def log(temperature, raw_fan_speed, fan_speed, integrator, error):
+def log(temperature, raw_fan_speed, fan_speed, pid):
     """
-    Log temperature and fan speed to syslog (& screen)
+    Logging to syslog and terminal (export DEBUG=True).
     """
-    message = "Temperature: " + str(temperature) + " | Fan speed: " \
-        + str(raw_fan_speed) + " | Fan " + str(fan_speed) + \
-            "% | Integrator " + str(integrator) + "| Error: " + \
-            str(error)
-    syslog.syslog(str(message))
+    P = str(pid.P_value)
+    I = str(pid.I_value)
+    D = str(pid.D_value)
+    E = str(pid.error)
+
+    TMP = str(temperature)
+    PWM = str(raw_fan_speed)
+    PCT = str(fan_speed)
+
+    all_vars = [TMP, PCT, PWM, P, I, D, E]
+    formatstring = "Temp: {:2} | FAN: {:2}% | PWM: {:3} | P={:3} | I={:3} | "\
+                   "D={:3} | Err={:3}|"
+
+    msg = formatstring.format(*all_vars)
+
+    syslog.openlog("SFC")
+    syslog.syslog(msg)
 
     if is_debug_enabled():
-        print message
+        print msg
 
 def main():
     """
+    Main function. Contains variables that can be tweaked to your needs.
+    Please look at the class object to see which attributes you can set.
+    The pid values are tuned to my particular system and may require
+    ajustment for your system(s).
     """
-    polling_interval = 60
+    polling_interval = 30
     target_temperature = 40
+    pid = PID(2, 1, 5, 0, 55, 100, 45)
+    pid.set_target_value(target_temperature)
 
     chassis = FanControl()
+    chassis.pwm_min = 100
+    chassis.pwm_max = 255
 
-    # temp_source = Controller()
+    #temp_source = Controller()
+    #temp_source.megacli = "/opt/MegaRAID/MegaCli/megacli"
+
     temp_source = Smart()
+    temp_source.device_filter = "sd"
+    temp_source.smart_workers = 30
 
-    pid = PID(2, 1, 5, 0, 55, 100, 50)
-
-    pid.set_target_value(target_temperature)
 
     try:
         while True:
             temp_source.get_highest_temperature()
             highest_temperature = temp_source.highest_temperature
-            #error = target_temperature - highest_temperature
+
             fan_duty_cycle = int(pid.update(highest_temperature))
             chassis.set_fan_speed(fan_duty_cycle)
             raw_fan_speed = chassis.get_pwm()
-            log(highest_temperature, raw_fan_speed, fan_duty_cycle, \
-                pid.I_value, pid.error)
+            log(highest_temperature, raw_fan_speed, fan_duty_cycle, pid)
 
             time.sleep(polling_interval)
 
