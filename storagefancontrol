@@ -13,6 +13,7 @@ import syslog
 import multiprocessing as mp
 import copy_reg
 import types
+import ConfigParser
 
 def _reduce_method(meth):
     """
@@ -23,15 +24,15 @@ def _reduce_method(meth):
 
 class PID:
     """
-    Discrete PID controll
+    Discrete PID control
     Source: http://code.activestate.com/recipes/577231-discrete-pid-controller/
 
     This class calculates the appropriate fan speed based on the difference
     between the current temperature and the desired (target) temperature.
     """
 
-    def __init__(self, P=1.0, I=1, D=1.0, Derivator=0, Integrator=2, \
-                Integrator_max=100, Integrator_min=0):
+    def __init__(self, P, I, D, Derivator, Integrator, \
+                Integrator_max, Integrator_min):
         """
         Generic initialisation of local variables.
         """
@@ -51,10 +52,10 @@ class PID:
         Calculate PID output value for given reference input and feedback
         Current_value = set_point - measured value (difference)
         """
-        self.error = current_value - self.set_point
+        self.error = current_value - int(self.set_point)
 
         self.P_value = self.Kp * self.error
-        self.D_value = self.Kd * ( self.error - self.Derivator)
+        self.D_value = self.Kd * ( self.error + self.Derivator)
         self.Derivator = self.error
 
         self.Integrator = self.Integrator + self.error
@@ -186,7 +187,7 @@ class Smart:
         to collect SMART data in parallel from multiple devices.
         """
         highest_temperature = 0
-        pool = mp.Pool(processes=self.smart_workers)
+        pool = mp.Pool(processes=int(self.smart_workers))
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
 
@@ -194,6 +195,8 @@ class Smart:
             if temperature > highest_temperature:
                 highest_temperature = temperature
         self.highest_temperature = highest_temperature
+
+        return self.highest_temperature
 
 class Controller:
     """
@@ -279,6 +282,8 @@ class Controller:
                     temperature = disk
         self.highest_temperature = int(temperature)
 
+        return self.highest_temperature
+
 
 class FanControl:
     """
@@ -296,6 +301,7 @@ class FanControl:
         self.pwm_max = 255
         self.pwm_min = 100
         self.pwm_safety = 160
+        self.fan_speed = 50
         self.enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
         self.fan_control_device = '/sys/class/hwmon/hwmon2/device/pwm2'
         self.debug = False
@@ -334,6 +340,7 @@ class FanControl:
         Set fan speed based on a percentage of full speed.
         Values are thus 1-100 instead of raw 1-255
         """
+        self.fan_speed = percent
         one_percent = float(self.pwm_max) / 100
         pwm = percent * one_percent
         self.set_pwm(int(pwm))
@@ -367,7 +374,7 @@ def is_debug_enabled():
     except (KeyError):
         return False
 
-def log(temperature, raw_fan_speed, fan_speed, pid):
+def log(temperature, chassis, pid):
     """
     Logging to syslog and terminal (export DEBUG=True).
     """
@@ -377,8 +384,8 @@ def log(temperature, raw_fan_speed, fan_speed, pid):
     E = str(pid.error)
 
     TMP = str(temperature)
-    PWM = str(raw_fan_speed)
-    PCT = str(fan_speed)
+    PWM = str(chassis.get_pwm())
+    PCT = str(chassis.fan_speed)
 
     all_vars = [TMP, PCT, PWM, P, I, D, E]
     formatstring = "Temp: {:2} | FAN: {:2}% | PWM: {:3} | P={:3} | I={:3} | "\
@@ -392,6 +399,59 @@ def log(temperature, raw_fan_speed, fan_speed, pid):
     if is_debug_enabled():
         print msg
 
+def read_config():
+    """ Main"""
+    config_file = "/etc/storagefancontrol"
+    conf = ConfigParser.SafeConfigParser()
+    conf.read(config_file)
+    return conf
+
+def get_pid_settings(config):
+    """ Get PID settings """
+    P = config.getint("Pid", "P")
+    I = config.getint("Pid", "I")
+    D = config.getint("Pid", "D")
+    D_amplification = config.getint("Pid", "D_amplification")
+    I_start = config.getint("Pid", "I_start")
+    I_max = config.getint("Pid", "I_max")
+    I_min = config.getint("Pid", "I_min")
+
+    pid = PID(P, I, D, D_amplification, I_start, I_max, I_min)
+    target_temperature = config.getint("General", "target_temperature")
+    pid.set_target_value(target_temperature)
+
+    return pid
+
+def get_temp_source(config):
+    """ Configure temperature source."""
+
+    mode = config.get("General", "mode")
+
+    if mode == "smart":
+        temp_source = Smart()
+        temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.smart_workers = config.getint("Smart", "smart_workers")
+        return temp_source
+
+    if mode == "controller":
+        temp_source = Controller()
+        temp_source.megacli = config.get("Controller", "megacli")
+        temp_source.ports_per_controller = config.getint("Controller", \
+                                         "ports_per_controller")
+        return temp_source
+
+    print "Mode not set, check config."
+    sys.exit(1)
+
+def get_chassis_settings(config):
+    """ Initialise chassis fan settings. """
+
+    chassis = FanControl()
+    chassis.pwm_min = config.getint("Chassis", "pwm_min")
+    chassis.pwm_max = config.getint("Chassis", "pwm_max")
+    chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
+    return chassis
+
 def main():
     """
     Main function. Contains variables that can be tweaked to your needs.
@@ -399,33 +459,19 @@ def main():
     The pid values are tuned to my particular system and may require
     ajustment for your system(s).
     """
-    polling_interval = 30
-    target_temperature = 40
-    pid = PID(2, 1, 5, 0, 55, 100, 45)
-    pid.set_target_value(target_temperature)
+    config = read_config()
+    polling_interval = config.getfloat("General", "polling_interval")
 
-    chassis = FanControl()
-    chassis.pwm_min = 100
-    chassis.pwm_max = 255
-
-    #temp_source = Controller()
-    #temp_source.megacli = "/opt/MegaRAID/MegaCli/megacli"
-
-    temp_source = Smart()
-    temp_source.device_filter = "sd"
-    temp_source.smart_workers = 30
-
+    chassis = get_chassis_settings(config)
+    pid = get_pid_settings(config)
+    temp_source = get_temp_source(config)
 
     try:
         while True:
-            temp_source.get_highest_temperature()
-            highest_temperature = temp_source.highest_temperature
-
-            fan_duty_cycle = int(pid.update(highest_temperature))
-            chassis.set_fan_speed(fan_duty_cycle)
-            raw_fan_speed = chassis.get_pwm()
-            log(highest_temperature, raw_fan_speed, fan_duty_cycle, pid)
-
+            highest_temperature = temp_source.get_highest_temperature()
+            fan_speed = pid.update(highest_temperature)
+            chassis.set_fan_speed(fan_speed)
+            log(highest_temperature, chassis, pid)
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):
