@@ -37,6 +37,14 @@ I_max = 100
 I_min = 45
 
 [Chassis]
+# This is the actual PWM device that controls the speed of the fans.
+fan_control_device = /sys/class/hwmon/hwmon2/device/pwm2
+
+# To allow the script to control the fan speed instead of the BIOS
+# the script needs to enable manual fan speed control through this
+# device. Make sure it matches the fan_control_device value.
+fan_control_enable = /sys/class/hwmon/hwmon2/device/pwm2_enable
+
 # PWM fan speed range is 1-255.
 # To protect against the risk of overheating, make sure that pwm_min is set
 # to a value that results in a reasonable airflow.

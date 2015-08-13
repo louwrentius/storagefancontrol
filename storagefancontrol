@@ -302,10 +302,9 @@ class FanControl:
         self.pwm_min = 100
         self.pwm_safety = 160
         self.fan_speed = 50
-        self.enablefan = '/sys/class/hwmon/hwmon2/device/pwm2_enable'
-        self.fan_control_device = '/sys/class/hwmon/hwmon2/device/pwm2'
+        self.fan_control_enable = ""
+        self.fan_control_device = ""
         self.debug = False
-        self.enable_fan_control()
 
     def get_pwm(self):
         """
@@ -324,6 +323,8 @@ class FanControl:
         are set to either pwm_min or pwm_max as a safety
         precaution.
         """
+        self.enable_fan_control()
+
         filename = self.fan_control_device
         pwm_max = self.pwm_max
         pwm_min = self.pwm_min
@@ -450,6 +451,8 @@ def get_chassis_settings(config):
     chassis.pwm_min = config.getint("Chassis", "pwm_min")
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
+    chassis.fan_control_enable = config.get( "Chassis", "fan_control_enable")
+    chassis.fan_control_device = config.get("Chassis", "fan_control_device")
     return chassis
 
 def main():
