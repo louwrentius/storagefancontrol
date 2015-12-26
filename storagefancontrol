@@ -310,11 +310,16 @@ class FanControl:
         """
         Return the current PWM speed setting.
         """
-        filename = self.fan_control_device
-        filehandle = open(filename, 'r')
-        pwm_value = int(filehandle.read().strip())
-        filehandle.close()
-        return pwm_value
+        PWM=""
+
+        for device in self.fan_control_device:
+            filename = device
+            filehandle = open(filename, 'r')
+            pwm_value = int(filehandle.read().strip())
+            filehandle.close()
+            PWM = PWM + " " + str(pwm_value)
+
+        return PWM
 
     def set_pwm(self, value):
         """
@@ -325,16 +330,18 @@ class FanControl:
         """
         self.enable_fan_control()
 
-        filename = self.fan_control_device
-        pwm_max = self.pwm_max
-        pwm_min = self.pwm_min
+        for device in self.fan_control_device:
 
-        value = pwm_max if value > pwm_max else value
-        value = pwm_min if value < pwm_min else value
+            filename = device
+            pwm_max = self.pwm_max
+            pwm_min = self.pwm_min
 
-        filehandle = open(filename, 'w')
-        filehandle.write(str(value))
-        filehandle.close()
+            value = pwm_max if value > pwm_max else value
+            value = pwm_min if value < pwm_min else value
+
+            filehandle = open(filename, 'w')
+            filehandle.write(str(value))
+            filehandle.close()
 
     def set_fan_speed(self, percent):
         """
@@ -350,15 +357,16 @@ class FanControl:
         """
         Tries to enable manual fan speed control."
         """
-        filename = self.fan_control_device
-        filehandle = open(filename, 'w')
-        try:
-            filehandle.write('1')
-            filehandle.close()
-        except IOError:
-            message = "Error enabling fan control. Sufficient privileges?"
-            print message
-            sys.exit(1)
+        for device in self.fan_control_device:
+            filename = device
+            filehandle = open(filename, 'w')
+            try:
+                filehandle.write('1')
+                filehandle.close()
+            except IOError:
+                message = "Error enabling fan control. Sufficient privileges?"
+                print message
+                sys.exit(1)
 
 
 def is_debug_enabled():
@@ -441,7 +449,7 @@ def get_temp_source(config):
                                          "ports_per_controller")
         return temp_source
 
-    print "Mode not set, check config."
+    print "Mode not set, check config.)"
     sys.exit(1)
 
 def get_chassis_settings(config):
@@ -452,7 +460,9 @@ def get_chassis_settings(config):
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
     chassis.fan_control_enable = config.get( "Chassis", "fan_control_enable")
+    chassis.fan_control_enable = chassis.fan_control_enable.split(",")
     chassis.fan_control_device = config.get("Chassis", "fan_control_device")
+    chassis.fan_control_device = chassis.fan_control_device.split(",")
     return chassis
 
 def main():
