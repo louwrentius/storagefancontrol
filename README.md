@@ -15,6 +15,8 @@ tool used by LSI-based HBA controllers.
 Fan speed is governed by PWM fan controls and sensors as supported by
 Linux under /sys/class/hwmon, such as /sys/class/hwmon/hwmon2/device/pwm2.
 
+This script has been updated to handle multiple PWM devices.
+
 Fan control is coverned by the control loop feedback mechanism [PID][pid].
 Here is a [nice intro][video01] on PID. By using PID, the script always finds
 the optimal fan speed no matter what the circumstances are.
