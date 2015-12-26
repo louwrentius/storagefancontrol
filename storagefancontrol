@@ -449,7 +449,7 @@ def get_temp_source(config):
                                          "ports_per_controller")
         return temp_source
 
-    print "Mode not set, check config.)"
+    print "Mode not set, check config."
     sys.exit(1)
 
 def get_chassis_settings(config):
