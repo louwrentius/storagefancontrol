@@ -357,7 +357,7 @@ class FanControl:
         """
         Tries to enable manual fan speed control."
         """
-        for device in self.fan_control_device:
+        for device in self.fan_control_enable:
             filename = device
             filehandle = open(filename, 'w')
             try:
