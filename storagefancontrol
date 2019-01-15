@@ -94,14 +94,15 @@ class Smart:
     of the hottest drive.
     """
 
-    def __init__(self):
+    def __init__(self, loadDevices):
         """
         Init.
         """
         self.block_devices = ""
-        self.device_filter = "sd"
+        self.device_filter = "(sd[a-z])"
         self.highest_temperature = 0
-        self.get_block_devices()
+        if loadDevices:
+            self.get_block_devices()
         self.smart_workers = 24
 
     def filter_block_devices(self, block_devices):
@@ -110,7 +111,9 @@ class Smart:
         """
         devices = []
         for device in block_devices:
-            if not device.find(self.device_filter):
+            if not re.search(self.device_filter, device):
+                continue
+            else:
                 devices.append(device)
         return devices
 
@@ -447,8 +450,9 @@ def get_temp_source(config):
     mode = config.get("General", "mode")
 
     if mode == "smart":
-        temp_source = Smart()
+        temp_source = Smart(False)
         temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.get_block_devices()
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
         return temp_source
 
