@@ -61,7 +61,7 @@ NAS: http://louwrentius.com/71-tib-diy-nas-based-on-zfs-on-linux.html
 INSTALL
 --------
 1. Copy the configuration file in /etc/
-2. Copy the executable in /usr/sbin or anywhere you want
+2. Copy the executable in /usr/sbin 
 3. Make sure the script is executed on boot. If you use systemd, put the etc/systemd/system/storagefancontrol.service file in the same path on your system. Run systemctl restart storagefancontrol to start the daemon.
 
 Graphite 
