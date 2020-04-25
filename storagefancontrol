@@ -30,6 +30,16 @@ class ConfigLogger(object):
         line = data.strip()
         print(line)
 
+class ConfigLogger(object):
+    def __init__(self):
+        return
+    def __call__(self, config):
+        config.write(self)
+    def write(self, data):
+        # stripping the data makes the output nicer and avoids empty lines
+        line = data.strip()
+        print(line)
+
 def _reduce_method(meth):
     """
     This is a hack to work around the fact that multiprocessing
