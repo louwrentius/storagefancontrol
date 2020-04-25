@@ -62,4 +62,12 @@ INSTALL
 --------
 1. Copy the configuration file in /etc/
 2. Copy the executable in /usr/sbin or anywhere you want
-3. Make sure the script is executed on boot.
+3. Make sure the script is executed on boot. If you use systemd, put the etc/systemd/system/storagefancontrol.service file in the same path on your system. Run systemctl restart storagefancontrol to start the daemon.
+
+Graphite 
+--------
+If you want to send metrics to graphite: 
+
+1. pip3 install graphitesend (to install the graphitesend module)
+2. edit your config file section [Graphite] with the appropriate settings. 
+
