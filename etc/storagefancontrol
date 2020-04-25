@@ -69,3 +69,11 @@ smart_workers = 30
 [Controller]
 megacli = /opt/MegaRAID/MegaCli/megacli
 ports_per_controller = 8
+
+[Graphite]
+enabled = 1
+host = target.graphite.com
+port = 2003
+prefix = storagefancontrol
+
+

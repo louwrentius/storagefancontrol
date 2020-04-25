@@ -1,0 +1,10 @@
+[Unit]
+Description=storagefancontrol
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/storagefancontrol
+
+[Install]
+WantedBy=multi-user.target
+

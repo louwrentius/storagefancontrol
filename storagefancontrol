@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 """
 This program controls the chassis fan speed through PWM based on the temperature
 of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool
@@ -11,9 +11,24 @@ import re
 import time
 import syslog
 import multiprocessing as mp
-import copy_reg
+import copyreg
 import types
-import ConfigParser
+import configparser
+import pprint
+try:
+    import graphitesend
+except ModuleNotFoundError:
+    print("Graphite module not installed. Data will not be logged to Graphite.")
+
+class ConfigLogger(object):
+    def __init__(self):
+        return
+    def __call__(self, config):
+        config.write(self)
+    def write(self, data):
+        # stripping the data makes the output nicer and avoids empty lines
+        line = data.strip()
+        print(line)
 
 def _reduce_method(meth):
     """
@@ -77,21 +92,22 @@ class PID:
         """
         self.set_point = set_point
 
-copy_reg.pickle(types.MethodType, _reduce_method)
+copyreg.pickle(types.MethodType, _reduce_method)
 class Smart:
     """
     Uses SMART data from storage devices to determine the temperature
     of the hottest drive.
     """
 
-    def __init__(self):
+    def __init__(self, loadDevices):
         """
         Init.
         """
         self.block_devices = ""
-        self.device_filter = "sd"
+        self.device_filter = "(sd[a-z])"
         self.highest_temperature = 0
-        self.get_block_devices()
+        if loadDevices:
+            self.get_block_devices()
         self.smart_workers = 24
 
     def filter_block_devices(self, block_devices):
@@ -100,7 +116,9 @@ class Smart:
         """
         devices = []
         for device in block_devices:
-            if not device.find(self.device_filter):
+            if not re.search(self.device_filter, device):
+                continue
+            else:
                 devices.append(device)
         return devices
 
@@ -124,13 +142,14 @@ class Smart:
 
         device = "/dev/" + device
 
+
         try:
-            child = subprocess.Popen(['smartctl',  '-a',  '-d',  'ata', \
+            child = subprocess.Popen(['smartctl',  '-a',   \
                                     device], stdout=subprocess.PIPE, \
                                      stderr=subprocess.PIPE)
         except OSError:
-            print "Executing smartctl gave an error,"
-            print "is smartmontools installed?"
+            print("Executing smartctl gave an error,")
+            print("is smartmontools installed?")
             sys.exit(1)
 
         rawdata = child.communicate()
@@ -175,7 +194,8 @@ class Smart:
         """
         Get the current temperature of a block device.
         """
-        smart_data = self.get_smart_data(device)
+        smart_data = self.get_smart_data(device).decode('utf-8')
+       
         temperature = int(self.get_parameter_from_smart(smart_data, \
                                             'Temperature_Celsius', 10))
         return temperature
@@ -357,7 +377,7 @@ class FanControl:
         """
         Tries to enable manual fan speed control."
         """
-        for device in self.fan_control_device:
+        for device in self.fan_control_enable:
             filename = device
             filehandle = open(filename, 'w')
             try:
@@ -365,7 +385,7 @@ class FanControl:
                 filehandle.close()
             except IOError:
                 message = "Error enabling fan control. Sufficient privileges?"
-                print message
+                print(message)
                 sys.exit(1)
 
 
@@ -383,7 +403,7 @@ def is_debug_enabled():
     except (KeyError):
         return False
 
-def log(temperature, chassis, pid):
+def log(temperature, chassis, pid, graphite):
     """
     Logging to syslog and terminal (export DEBUG=True).
     """
@@ -406,12 +426,27 @@ def log(temperature, chassis, pid):
     syslog.syslog(msg)
 
     if is_debug_enabled():
-        print msg
+        print(msg)
+    
+    if graphite['enabled']:
+        dataset = [ ("temperature", TMP),
+                    ("pwm", PWM),
+                    ("fanspeed", PCT)]
+        send_to_graphite(dataset, graphite)
+
+
+def send_to_graphite(dataset, settings):
+    g = graphitesend.init(graphite_server=settings['host'],
+                      graphite_port=settings['port'],
+                      asynchronous=False,
+                      prefix=settings['prefix'])
+
+    g.send_list(dataset)
 
 def read_config():
     """ Main"""
     config_file = "/etc/storagefancontrol"
-    conf = ConfigParser.SafeConfigParser()
+    conf = configparser.ConfigParser()
     conf.read(config_file)
     return conf
 
@@ -437,8 +472,9 @@ def get_temp_source(config):
     mode = config.get("General", "mode")
 
     if mode == "smart":
-        temp_source = Smart()
+        temp_source = Smart(False)
         temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.get_block_devices()
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
         return temp_source
 
@@ -449,7 +485,7 @@ def get_temp_source(config):
                                          "ports_per_controller")
         return temp_source
 
-    print "Mode not set, check config."
+    print("Mode not set, check config.")
     sys.exit(1)
 
 def get_chassis_settings(config):
@@ -465,6 +501,20 @@ def get_chassis_settings(config):
     chassis.fan_control_device = chassis.fan_control_device.split(",")
     return chassis
 
+def get_graphite_settings(config):
+
+    settings = {}
+    settings['enabled'] = int(config.get("Graphite","enabled"))
+    settings['host'] = str(config.get("Graphite","host"))
+    settings['port'] = int(config.get("Graphite","port"))
+    settings['prefix'] = str(config.get("Graphite","prefix"))
+
+    if settings['enabled'] == 1:
+        settings['enabled'] = True
+    else:
+        settings['enabled'] = False
+    return settings
+
 def main():
     """
     Main function. Contains variables that can be tweaked to your needs.
@@ -473,6 +523,9 @@ def main():
     ajustment for your system(s).
     """
     config = read_config()
+    
+    graphite = get_graphite_settings(config)
+
     polling_interval = config.getfloat("General", "polling_interval")
 
     chassis = get_chassis_settings(config)
@@ -484,7 +537,7 @@ def main():
             highest_temperature = temp_source.get_highest_temperature()
             fan_speed = pid.update(highest_temperature)
             chassis.set_fan_speed(fan_speed)
-            log(highest_temperature, chassis, pid)
+            log(highest_temperature, chassis, pid, graphite)
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):
