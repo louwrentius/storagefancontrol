@@ -30,16 +30,6 @@ class ConfigLogger(object):
         line = data.strip()
         print(line)
 
-class ConfigLogger(object):
-    def __init__(self):
-        return
-    def __call__(self, config):
-        config.write(self)
-    def write(self, data):
-        # stripping the data makes the output nicer and avoids empty lines
-        line = data.strip()
-        print(line)
-
 def _reduce_method(meth):
     """
     This is a hack to work around the fact that multiprocessing
@@ -115,10 +105,35 @@ class Smart:
         """
         self.block_devices = ""
         self.device_filter = "(sd[a-z])"
+        self.usb_filter = False
         self.highest_temperature = 0
         if loadDevices:
             self.get_block_devices()
         self.smart_workers = 24
+
+
+    def filter_disk_by_path_usb(self):
+        disk_by_path = os.listdir('/dev/disk/by-path')
+        filtered_list = []
+        for item in disk_by_path:
+            if 'usb' not in item and 'part' not in item:
+                link = os.readlink("/dev/disk/by-path/" + item)
+                link = os.path.basename(link)
+                filtered_list.append(link)
+        return filtered_list
+
+    def filter_usb_devices(self, block_devices):
+        valid_devices = self.filter_disk_by_path_usb()
+        usb_filtered_devices = []
+
+        if self.usb_filter == 'true':
+            for device in block_devices:
+                if device in valid_devices:
+                    usb_filtered_devices.append(device)
+        else:
+            usb_filtered_devices = block_devices    
+        return usb_filtered_devices
+        
 
     def filter_block_devices(self, block_devices):
         """
@@ -143,6 +158,7 @@ class Smart:
         block_devices = os.listdir(devicepath)
         block_devices.sort()
         self.block_devices = self.filter_block_devices(block_devices)
+        self.block_devices = self.filter_usb_devices(self.block_devices)
 
     def get_smart_data(self, device):
         """
@@ -204,10 +220,13 @@ class Smart:
         """
         Get the current temperature of a block device.
         """
-        smart_data = self.get_smart_data(device).decode('utf-8')
-       
-        temperature = int(self.get_parameter_from_smart(smart_data, \
+        result = self.get_smart_data(device)
+        if isinstance(result, bytes):
+            smart_data = self.get_smart_data(device).decode('utf-8')
+            temperature = int(self.get_parameter_from_smart(smart_data, \
                                             'Temperature_Celsius', 10))
+        else:
+            temperature = -1 # should mean 'error'
         return temperature
 
     def get_highest_temperature(self):
@@ -221,10 +240,7 @@ class Smart:
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
 
-        for temperature in results:
-            if temperature > highest_temperature:
-                highest_temperature = temperature
-        self.highest_temperature = highest_temperature
+        self.highest_temperature = max(results)
 
         return self.highest_temperature
 
@@ -484,6 +500,7 @@ def get_temp_source(config):
     if mode == "smart":
         temp_source = Smart(False)
         temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.usb_filter = config.get("Smart", "usb_filter")
         temp_source.get_block_devices()
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
         return temp_source
