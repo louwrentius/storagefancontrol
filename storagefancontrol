@@ -195,6 +195,10 @@ class Smart:
                 return None
         
         smartdata = rawdata[0]
+        destination = '/tmp/storagefancontrol'
+        os.makedirs(destination, exist_ok=True)
+        with open(destination + '/smartdata_' + os.path.basename(device), 'w') as f:
+            f.write(smartdata.decode('utf-8'))
         return smartdata
 
     def get_parameter_from_smart(self, data, parameter, distance):
@@ -203,7 +207,12 @@ class Smart:
         """
         regex = re.compile(parameter + '(.*)')
         match = regex.search(data)
-
+        # DEBUG
+        destination = '/tmp/storagefancontrol'
+        os.makedirs(destination, exist_ok=True)
+        with open(destination + '/regex_data', 'a') as f:
+            f.write(str(match)+'\n')
+        # /DEBUG
         if match:
             tmp = match.group(1)
             length = len(tmp.split("   "))
@@ -226,6 +235,7 @@ class Smart:
         Get the current temperature of a block device.
         """
         result = self.get_smart_data(device)
+
         if isinstance(result, bytes):
             smart_data = self.get_smart_data(device).decode('utf-8')
             temperature = int(self.get_parameter_from_smart(smart_data, \
