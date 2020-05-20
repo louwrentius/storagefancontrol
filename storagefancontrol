@@ -97,6 +97,7 @@ class Smart:
         self.device_filter = "(sd[a-z])"
         self.usb_filter = False
         self.highest_temperature = 0
+        self.device_exclude = []
         if loadDevices:
             self.get_block_devices()
         self.smart_workers = 24
@@ -123,7 +124,17 @@ class Smart:
         else:
             usb_filtered_devices = block_devices    
         return usb_filtered_devices
-        
+
+    def filter_excluded_devices(self, block_devices):
+        valid_devices = []
+        for device in block_devices:
+            if device not in self.device_exclude:
+                valid_devices.append(device)
+            else:
+                if is_debug_enabled():
+                    pprint.pprint(f"Device {device} is excluded.")
+        return valid_devices
+
 
     def filter_block_devices(self, block_devices):
         """
@@ -152,6 +163,7 @@ class Smart:
         # self.block_devices = ['sda', 'sdb', 'sdc', 'sdd', 'sde', 'sdf',\ 
         #  'sdg', 'sdh', 'sdi', 'sdj', 'sdk', 'sdl', 'sdm', 'sdn', 'sdo',\
         # 'sdp', 'sdq', 'sdr', 'sds', 'sdt', 'sdu', 'sdv']
+        self.block_devices = self.filter_excluded_devices(self.block_devices)
 
     def get_smart_data_debug(self, device):
         try:
@@ -235,7 +247,6 @@ class Smart:
         Get the current temperature of a block device.
         """
         result = self.get_smart_data(device)
-
         if isinstance(result, bytes):
             smart_data = self.get_smart_data(device).decode('utf-8')
             temperature = int(self.get_parameter_from_smart(smart_data, \
@@ -517,6 +528,7 @@ def get_temp_source(config):
     if mode == "smart":
         temp_source = Smart(False)
         temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.device_exclude = config.get("Smart", "device_exclude")
         temp_source.usb_filter = config.get("Smart", "usb_filter")
         temp_source.get_block_devices()
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
