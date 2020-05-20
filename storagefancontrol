@@ -133,6 +133,7 @@ class Smart:
             else:
                 if is_debug_enabled():
                     pprint.pprint(f"Device {device} is excluded.")
+        pprint.pprint(valid_devices)
         return valid_devices
 
 
