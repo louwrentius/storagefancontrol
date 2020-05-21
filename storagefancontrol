@@ -161,11 +161,14 @@ class Smart:
         block_devices.sort()
         print(f"Raw block devices detected: {block_devices}")
         self.block_devices = self.filter_block_devices(block_devices)
+        print(f"filtered devices detected: {self.block_devices}")
         self.block_devices = self.filter_usb_devices(self.block_devices)
         # self.block_devices = ['sda', 'sdb', 'sdc', 'sdd', 'sde', 'sdf',\ 
         #  'sdg', 'sdh', 'sdi', 'sdj', 'sdk', 'sdl', 'sdm', 'sdn', 'sdo',\
         # 'sdp', 'sdq', 'sdr', 'sds', 'sdt', 'sdu', 'sdv']
+        print(f"USB filtered block devices detected: {self.block_devices}")
         self.block_devices = self.filter_excluded_devices(self.block_devices)
+        print(f"Excluded filtered block devices detected: {self.block_devices}")
 
     def get_smart_data_debug(self, device):
         try:
