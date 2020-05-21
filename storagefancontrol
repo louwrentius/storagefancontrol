@@ -20,16 +20,6 @@ try:
 except ModuleNotFoundError:
     print("Graphite module not installed. Data will not be logged to Graphite.")
 
-class ConfigLogger(object):
-    def __init__(self):
-        return
-    def __call__(self, config):
-        config.write(self)
-    def write(self, data):
-        # stripping the data makes the output nicer and avoids empty lines
-        line = data.strip()
-        print(line)
-
 def _reduce_method(meth):
     """
     This is a hack to work around the fact that multiprocessing
@@ -107,6 +97,7 @@ class Smart:
         self.device_filter = "(sd[a-z])"
         self.usb_filter = False
         self.highest_temperature = 0
+        self.device_exclude = []
         if loadDevices:
             self.get_block_devices()
         self.smart_workers = 24
@@ -133,7 +124,18 @@ class Smart:
         else:
             usb_filtered_devices = block_devices    
         return usb_filtered_devices
-        
+
+    def filter_excluded_devices(self, block_devices):
+        valid_devices = []
+        for device in block_devices:
+            if device not in self.device_exclude:
+                valid_devices.append(device)
+            else:
+                if is_debug_enabled():
+                    print(f"Device {device} is excluded.")
+        if is_debug_enabled():
+            print(f"Valid devices: {valid_devices}")
+        return valid_devices
 
     def filter_block_devices(self, block_devices):
         """
@@ -157,8 +159,38 @@ class Smart:
         devicepath = "/sys/block"
         block_devices = os.listdir(devicepath)
         block_devices.sort()
+        if is_debug_enabled():
+            print(f"Raw block devices detected: {block_devices}")
         self.block_devices = self.filter_block_devices(block_devices)
+        if is_debug_enabled():
+            print(f"filtered devices detected: {self.block_devices}")
         self.block_devices = self.filter_usb_devices(self.block_devices)
+        # self.block_devices = ['sda', 'sdb', 'sdc', 'sdd', 'sde', 'sdf',\ 
+        #  'sdg', 'sdh', 'sdi', 'sdj', 'sdk', 'sdl', 'sdm', 'sdn', 'sdo',\
+        # 'sdp', 'sdq', 'sdr', 'sds', 'sdt', 'sdu', 'sdv']
+        if is_debug_enabled():
+            print(f"USB filtered block devices detected: {self.block_devices}")
+        self.block_devices = self.filter_excluded_devices(self.block_devices)
+        if is_debug_enabled():
+            print(f"Excluded filtered block devices detected: {self.block_devices}")
+
+    def get_smart_data_debug(self, device):
+        try:
+            child = subprocess.Popen(['cat',  device
+                                    ], stdout=subprocess.PIPE, \
+                                     stderr=subprocess.PIPE)
+        except OSError:
+            print("Executing smartctl gave an error,")
+            print("is smartmontools installed?")
+            sys.exit(1)
+
+        rawdata = child.communicate()
+        # pprint.pprint(type(rawdata[0]))
+        # pprint.pprint(child.returncode)
+        if child.returncode == 1:
+                return -2
+        smartdata = rawdata[0]
+        return smartdata
 
     def get_smart_data(self, device):
         """
@@ -167,7 +199,6 @@ class Smart:
         """
 
         device = "/dev/" + device
-
 
         try:
             child = subprocess.Popen(['smartctl',  '-a',   \
@@ -179,16 +210,17 @@ class Smart:
             sys.exit(1)
 
         rawdata = child.communicate()
-
+        
         if child.returncode:
-            child = subprocess.Popen(['smartctl',  '-a',  device],
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE)
-            rawdata = child.communicate()
             if child.returncode == 1:
-                return ""
-
+                return None
+        
         smartdata = rawdata[0]
+        if is_debug_enabled():
+            destination = '/tmp/storagefancontrol'
+            os.makedirs(destination, exist_ok=True)
+            with open(destination + '/smartdata_' + os.path.basename(device), 'w') as f:
+                f.write(smartdata.decode('utf-8'))
         return smartdata
 
     def get_parameter_from_smart(self, data, parameter, distance):
@@ -197,13 +229,18 @@ class Smart:
         """
         regex = re.compile(parameter + '(.*)')
         match = regex.search(data)
-
+        # DEBUG
+        if is_debug_enabled():
+            destination = '/tmp/storagefancontrol'
+            os.makedirs(destination, exist_ok=True)
+            with open(destination + '/regex_data', 'a') as f:
+                f.write(str(match)+'\n')
+        # /DEBUG
         if match:
             tmp = match.group(1)
             length = len(tmp.split("   "))
             if length <= distance:
                 distance = length-1
-
             #
             # SMART data is often a bit of a mess,  so this
             # hack is used to cope with this.
@@ -214,7 +251,7 @@ class Smart:
             except:
                 model = match.group(1).split("   ")[distance+1].split(" ")[1]
             return str(model)
-        return 0
+        return -10
 
     def get_temperature(self, device):
         """
@@ -226,7 +263,7 @@ class Smart:
             temperature = int(self.get_parameter_from_smart(smart_data, \
                                             'Temperature_Celsius', 10))
         else:
-            temperature = -1 # should mean 'error'
+            temperature = -30 # should mean 'error'
         return temperature
 
     def get_highest_temperature(self):
@@ -235,13 +272,17 @@ class Smart:
         Because retrieving SMART data is slow, multiprocessing is used
         to collect SMART data in parallel from multiple devices.
         """
-        highest_temperature = 0
         pool = mp.Pool(processes=int(self.smart_workers))
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
-
-        self.highest_temperature = max(results)
-
+        if is_debug_enabled():
+            print(f"Size of result is: {len(results)}")
+            print(f"Temperature reading: {results}")
+        try:
+            self.highest_temperature = max(results)
+        except ValueError:
+            print(f"\nNo temperature data retreived through SMART. Exiting.\n")
+            exit(1)
         return self.highest_temperature
 
 class Controller:
@@ -500,6 +541,7 @@ def get_temp_source(config):
     if mode == "smart":
         temp_source = Smart(False)
         temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.device_exclude = config.get("Smart", "device_exclude")
         temp_source.usb_filter = config.get("Smart", "usb_filter")
         temp_source.get_block_devices()
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
@@ -550,15 +592,13 @@ def main():
     ajustment for your system(s).
     """
     config = read_config()
-    
     graphite = get_graphite_settings(config)
-
     polling_interval = config.getfloat("General", "polling_interval")
 
     chassis = get_chassis_settings(config)
     pid = get_pid_settings(config)
     temp_source = get_temp_source(config)
-
+ 
     try:
         while True:
             highest_temperature = temp_source.get_highest_temperature()
