@@ -130,12 +130,12 @@ class Smart:
         for device in block_devices:
             if device not in self.device_exclude:
                 valid_devices.append(device)
-                print(f"Device {device} will be monitored.")
             else:
-                print(f"Device {device} is excluded.")
-        print(f"Valid devices: {valid_devices}")
+                if is_debug_enabled():
+                    print(f"Device {device} is excluded.")
+        if is_debug_enabled():
+            print(f"Valid devices: {valid_devices}")
         return valid_devices
-
 
     def filter_block_devices(self, block_devices):
         """
@@ -159,16 +159,20 @@ class Smart:
         devicepath = "/sys/block"
         block_devices = os.listdir(devicepath)
         block_devices.sort()
-        print(f"Raw block devices detected: {block_devices}")
+        if is_debug_enabled():
+            print(f"Raw block devices detected: {block_devices}")
         self.block_devices = self.filter_block_devices(block_devices)
-        print(f"filtered devices detected: {self.block_devices}")
+        if is_debug_enabled():
+            print(f"filtered devices detected: {self.block_devices}")
         self.block_devices = self.filter_usb_devices(self.block_devices)
         # self.block_devices = ['sda', 'sdb', 'sdc', 'sdd', 'sde', 'sdf',\ 
         #  'sdg', 'sdh', 'sdi', 'sdj', 'sdk', 'sdl', 'sdm', 'sdn', 'sdo',\
         # 'sdp', 'sdq', 'sdr', 'sds', 'sdt', 'sdu', 'sdv']
-        print(f"USB filtered block devices detected: {self.block_devices}")
+        if is_debug_enabled():
+            print(f"USB filtered block devices detected: {self.block_devices}")
         self.block_devices = self.filter_excluded_devices(self.block_devices)
-        print(f"Excluded filtered block devices detected: {self.block_devices}")
+        if is_debug_enabled():
+            print(f"Excluded filtered block devices detected: {self.block_devices}")
 
     def get_smart_data_debug(self, device):
         try:
@@ -212,10 +216,11 @@ class Smart:
                 return None
         
         smartdata = rawdata[0]
-        destination = '/tmp/storagefancontrol'
-        os.makedirs(destination, exist_ok=True)
-        with open(destination + '/smartdata_' + os.path.basename(device), 'w') as f:
-            f.write(smartdata.decode('utf-8'))
+        if is_debug_enabled():
+            destination = '/tmp/storagefancontrol'
+            os.makedirs(destination, exist_ok=True)
+            with open(destination + '/smartdata_' + os.path.basename(device), 'w') as f:
+                f.write(smartdata.decode('utf-8'))
         return smartdata
 
     def get_parameter_from_smart(self, data, parameter, distance):
@@ -225,10 +230,11 @@ class Smart:
         regex = re.compile(parameter + '(.*)')
         match = regex.search(data)
         # DEBUG
-        destination = '/tmp/storagefancontrol'
-        os.makedirs(destination, exist_ok=True)
-        with open(destination + '/regex_data', 'a') as f:
-            f.write(str(match)+'\n')
+        if is_debug_enabled():
+            destination = '/tmp/storagefancontrol'
+            os.makedirs(destination, exist_ok=True)
+            with open(destination + '/regex_data', 'a') as f:
+                f.write(str(match)+'\n')
         # /DEBUG
         if match:
             tmp = match.group(1)
@@ -269,10 +275,9 @@ class Smart:
         pool = mp.Pool(processes=int(self.smart_workers))
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
-        if is_debug_enabled:
+        if is_debug_enabled():
             print(f"Size of result is: {len(results)}")
-            for item in results:
-                print(f"Temperature reading: {item}")
+            print(f"Temperature reading: {results}")
         try:
             self.highest_temperature = max(results)
         except ValueError:
@@ -593,7 +598,7 @@ def main():
     chassis = get_chassis_settings(config)
     pid = get_pid_settings(config)
     temp_source = get_temp_source(config)
-
+ 
     try:
         while True:
             highest_temperature = temp_source.get_highest_temperature()
