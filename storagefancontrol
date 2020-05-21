@@ -266,6 +266,7 @@ class Smart:
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
         if is_debug_enabled:
+            print(f"Size of result is: {len(results)}")
             for item in results:
                 print(f"Temperature reading: {item}")
         try:
