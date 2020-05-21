@@ -61,7 +61,7 @@ pwm_safety = 180
 
 [Smart]
 # We only look at the temperature of hard drives we care about.
-device_filter = "sd"
+device_filter = sd
 device_exclude = ""
 usb_filter = false # set to true if you want to filter out USB devices
 # How many instances of 'smartctl' are run in parallel when polling for
