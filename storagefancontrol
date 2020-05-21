@@ -130,10 +130,10 @@ class Smart:
         for device in block_devices:
             if device not in self.device_exclude:
                 valid_devices.append(device)
+                print(f"Device {device} will be monitored.")
             else:
-                if is_debug_enabled():
-                    pprint.pprint(f"Device {device} is excluded.")
-        pprint.pprint(valid_devices)
+                print(f"Device {device} is excluded.")
+        print(f"Valid devices: {valid_devices}")
         return valid_devices
 
 
@@ -262,10 +262,12 @@ class Smart:
         Because retrieving SMART data is slow, multiprocessing is used
         to collect SMART data in parallel from multiple devices.
         """
-        highest_temperature = 0
         pool = mp.Pool(processes=int(self.smart_workers))
         results = pool.map(self.get_temperature, self.block_devices)
         pool.close()
+        if is_debug_enabled:
+            for item in results:
+                print(f"Temperature reading: {item}")
         try:
             self.highest_temperature = max(results)
         except ValueError:
