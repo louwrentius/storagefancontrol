@@ -159,6 +159,7 @@ class Smart:
         devicepath = "/sys/block"
         block_devices = os.listdir(devicepath)
         block_devices.sort()
+        print(f"Raw block devices detected: {block_devices}")
         self.block_devices = self.filter_block_devices(block_devices)
         self.block_devices = self.filter_usb_devices(self.block_devices)
         # self.block_devices = ['sda', 'sdb', 'sdc', 'sdd', 'sde', 'sdf',\ 
