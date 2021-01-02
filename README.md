@@ -56,7 +56,7 @@ The script performs a poll every 30 seconds by default.
 
 I'm using this script myself to govern the fan speed of my [storage server][NAS].
 
-NAS: http://louwrentius.com/71-tib-diy-nas-based-on-zfs-on-linux.html
+[NAS]: http://louwrentius.com/71-tib-diy-nas-based-on-zfs-on-linux.html
 
 INSTALL
 --------
