@@ -303,7 +303,7 @@ class Controller:
             [self.megacli,'-cfgdsply','-aALL'],\
              stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
         regex = re.compile('Adapter:.*')
-        match = regex.findall(rawdata)
+        match = regex.findall(rawdata.decode("utf-8"))
         return len(match)
 
     def get_drive_temp(self, controller, port):
@@ -318,7 +318,7 @@ class Controller:
                stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
 
         regex = re.compile('Drive Temperature :(.*)')
-        match = regex.search(rawdata)
+        match = regex.search(rawdata.decode("utf-8"))
         try:
             temp = match.group(1).split("C")[0]
 
@@ -342,11 +342,11 @@ class Controller:
         chassis. The second dimension is the drive.
         """
         drivearray = \
-             [[0 for x in xrange(self.ports_per_controller)]\
-                for x in xrange(self.number_of_controllers())]
+             [[0 for x in range(self.ports_per_controller)]\
+                for x in range(self.number_of_controllers())]
 
-        for controller in xrange(self.number_of_controllers()):
-            for port in xrange(self.ports_per_controller):
+        for controller in range(self.number_of_controllers()):
+            for port in range(self.ports_per_controller):
                 disk = self.get_drive_temp(controller, port)
                 if len(disk) == 0:
                     disk = ""
@@ -365,6 +365,7 @@ class Controller:
         temperature = 0
         for controller in data:
             for disk in controller:
+                disk = int(disk)
                 if disk > temperature:
                     temperature = disk
         self.highest_temperature = int(temperature)
